@@ -584,6 +584,8 @@ let mediaRecorder = null;
 let recordChunks = [];
 let recordStream = null;
 let micSourceNode = null;   // MediaStreamSource inside main audioCtx
+let micMonoNode = null;     // forces the raw mic signal down to a real (non-silent) mono channel
+let micMonoDest = null;     // MediaStreamDestination the MediaRecorder actually captures from
 let recAnalyser = null;
 let isRecording = false;
 let isPaused = false;
@@ -598,6 +600,7 @@ let monitorMode   = 'off';  // 'off' | 'direct' | 'effects'
 let monitorChain  = null;
 let monitorCtx    = null;   // dedicated low-latency AudioContext
 let monitorMicSrc = null;   // MediaStreamSource inside monitorCtx
+let monitorMonoNode = null; // forces the monitored signal to mono, same reasoning as recording
 // convenience alias used throughout
 const isMonitoring = () => monitorMode !== 'off';
 
@@ -1293,6 +1296,19 @@ btnPauseRec.addEventListener('click', () => { isPaused ? resumeRecording() : pau
 btnResetRec.addEventListener('click', resetRecording);
 btnMonitor.addEventListener('click', toggleMonitor);
 
+// Forces a signal down to a single real channel via the standard 0.5*(L+R) downmix.
+// Some mics/headsets report 2 input channels to the OS but only actually wire the left
+// one, leaving the right silent (or, once naively duplicated, unbalanced) — this fixes
+// that regardless of what the raw device stream actually contains. Used for both what
+// gets recorded and what gets monitored live.
+function makeMonoDownmixNode(ctx) {
+  const g = ctx.createGain();
+  g.channelCount = 1;
+  g.channelCountMode = 'explicit';
+  g.channelInterpretation = 'speakers';
+  return g;
+}
+
 function createMediaRecorder(stream) {
   const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg']
     .find(t => MediaRecorder.isTypeSupported(t)) || '';
@@ -1310,6 +1326,7 @@ async function startRecording() {
         noiseSuppression:  false,  // we have our own noise gate
         autoGainControl:   false,  // we have our own volume control
         latency:           0,      // request minimum input buffering
+        channelCount:      { ideal: 1 }, // many mics report 2 channels but only wire the left one
       },
       video: false,
     });
@@ -1329,9 +1346,15 @@ async function startRecording() {
   recAnalyser.fftSize = 256;
   micSourceNode.connect(recAnalyser);
 
-  // MediaRecorder always captures the raw stream so effects stay re-adjustable after
+  // The MediaRecorder captures THIS mono-forced stream, not the raw mic stream —
+  // see makeMonoDownmixNode() for why.
+  micMonoNode = makeMonoDownmixNode(ctx);
+  micSourceNode.connect(micMonoNode);
+  micMonoDest = ctx.createMediaStreamDestination();
+  micMonoNode.connect(micMonoDest);
+
   recordChunks = [];
-  mediaRecorder = createMediaRecorder(recordStream);
+  mediaRecorder = createMediaRecorder(micMonoDest.stream);
   mediaRecorder.start(100);
 
   isRecording = true;
@@ -1385,7 +1408,7 @@ function resetRecording() {
     if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   }
   recordChunks = [];
-  mediaRecorder = createMediaRecorder(recordStream);
+  mediaRecorder = createMediaRecorder(micMonoDest.stream);
   mediaRecorder.start(100);
 
   isPaused = false;
@@ -1416,6 +1439,8 @@ function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
   if (micSourceNode) { try { micSourceNode.disconnect(); } catch(_) {} micSourceNode = null; }
+  if (micMonoNode) { try { micMonoNode.disconnect(); } catch(_) {} micMonoNode = null; }
+  if (micMonoDest) { try { micMonoDest.stream.getTracks().forEach(t => t.stop()); } catch(_) {} micMonoDest = null; }
   recAnalyser = null;
   cancelAnimationFrame(levelRafId);
   cancelAnimationFrame(recTimerRafId);
@@ -1455,6 +1480,7 @@ async function toggleMonitor() {
 async function enableMonitor(mode) {
   // Tear down any existing monitor first
   if (monitorMicSrc) { try { monitorMicSrc.disconnect(); } catch(_) {} monitorMicSrc = null; }
+  monitorMonoNode = null;
   monitorChain = null;
   if (monitorCtx) { monitorCtx.close(); monitorCtx = null; }
 
@@ -1462,15 +1488,20 @@ async function enableMonitor(mode) {
   monitorCtx = new AudioContext({ latencyHint: 'interactive' });
   monitorMicSrc = monitorCtx.createMediaStreamSource(recordStream);
 
+  // Same mono-forcing fix as recording — otherwise monitoring would sound left-heavy/
+  // unbalanced on mics/headsets that only wire the left input channel.
+  monitorMonoNode = makeMonoDownmixNode(monitorCtx);
+  monitorMicSrc.connect(monitorMonoNode);
+
   if (mode === 'direct') {
     // Shortest possible path: mic → speakers, no processing, minimum latency
-    monitorMicSrc.connect(monitorCtx.destination);
+    monitorMonoNode.connect(monitorCtx.destination);
   } else {
     // Full effects chain
     const pr = getParams();
     if (pr.nsOn) { try { await ensureGate(monitorCtx); } catch(_) {} }
     monitorChain = buildChain(monitorCtx, pr);
-    monitorMicSrc.connect(monitorChain.input);
+    monitorMonoNode.connect(monitorChain.input);
   }
 
   monitorMode = mode;
@@ -1479,6 +1510,7 @@ async function enableMonitor(mode) {
 
 function disableMonitor() {
   if (monitorMicSrc) { try { monitorMicSrc.disconnect(); } catch(_) {} monitorMicSrc = null; }
+  monitorMonoNode = null;
   monitorChain = null;
   if (monitorCtx) { monitorCtx.close(); monitorCtx = null; }
   monitorMode = 'off';
@@ -1487,13 +1519,13 @@ function disableMonitor() {
 
 // Rebuild effects graph inside the existing monitor context (effects mode only)
 async function rebuildMonitorChain() {
-  if (monitorMode !== 'effects' || !monitorCtx || !monitorMicSrc) return;
-  try { monitorMicSrc.disconnect(); } catch(_) {}
+  if (monitorMode !== 'effects' || !monitorCtx || !monitorMonoNode) return;
+  try { monitorMonoNode.disconnect(); } catch(_) {}
   monitorChain = null;
   const pr = getParams();
   if (pr.nsOn) { try { await ensureGate(monitorCtx); } catch(_) {} }
   monitorChain = buildChain(monitorCtx, pr);
-  monitorMicSrc.connect(monitorChain.input);
+  monitorMonoNode.connect(monitorChain.input);
 }
 
 async function finishRecording() {
