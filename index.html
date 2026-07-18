@@ -267,6 +267,7 @@
       <div class="time"><span id="curTime">0:00</span> / <span id="totTime">0:00</span></div>
     </div>
     <button class="btn-monitor" id="btnBypass" title="A/B compare: toggle between dry (unprocessed) and fully effected audio.">🎧 Bypass</button>
+    <button class="btn-monitor" id="btnDiag" title="Show audio diagnostics — useful if playback has no sound">🩺 Diag</button>
   </div>
 
   <!-- Effects -->
@@ -624,6 +625,7 @@ const stopBtn     = $('stopBtn');
 const btnRew      = $('btnRew');
 const btnFwd      = $('btnFwd');
 const btnBypass   = $('btnBypass');
+const btnDiag     = $('btnDiag');
 const seekBar     = $('seekBar');
 const curTimeEl   = $('curTime');
 const totTimeEl   = $('totTime');
@@ -1997,6 +1999,42 @@ btnBypass.addEventListener('click', () => {
   // worklet node exists and how fades are scheduled, both of which require
   // rebuilding the chain rather than patching it live.
   if (isPlaying) play(nowPos());
+});
+
+// ── Audio diagnostics (for debugging silent playback on devices we can't attach
+// devtools to, e.g. iPhone without a Mac) ───────────────────────────────────
+btnDiag.addEventListener('click', async () => {
+  unlockAudioSession();
+  const ctx = getCtx();
+  const stateBefore = ctx.state;
+  let resumeError = null;
+  try { await ctx.resume(); } catch (e) { resumeError = e && e.message; }
+
+  let unlockError = null;
+  try {
+    const el = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+    await el.play();
+    el.pause();
+  } catch (e) { unlockError = e && e.message; }
+
+  const info = {
+    userAgent: navigator.userAgent,
+    isSecureContext: window.isSecureContext,
+    ctxStateBefore: stateBefore,
+    ctxStateAfterResume: ctx.state,
+    resumeError,
+    sampleRate: ctx.sampleRate,
+    baseLatency: ctx.baseLatency,
+    destChannelCount: ctx.destination.channelCount,
+    destMaxChannelCount: ctx.destination.maxChannelCount,
+    unlockAudioPlayError: unlockError,
+    audioBufferLoaded: !!audioBuffer,
+    audioBufferDuration: audioBuffer ? audioBuffer.duration : null,
+    audioBufferChannels: audioBuffer ? audioBuffer.numberOfChannels : null,
+    isPlaying,
+    bypassOn,
+  };
+  alert(JSON.stringify(info, null, 2));
 });
 
 // ── Playback events ────────────────────────────────────────────────────────
