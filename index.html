@@ -692,6 +692,24 @@ function fmt(s) {
 function setStatus(msg, cls='') {
   statusEl.textContent = msg; statusEl.className = 'status ' + cls;
 }
+// iOS Safari sometimes routes raw Web Audio API output through the phone's RINGER
+// audio channel instead of the media-volume channel — silenced by the ring/silent
+// switch or a separately-low ringer volume, with no error and no other symptom
+// (iPads have no ringer channel, so they're unaffected). Playing — and immediately
+// pausing — a real <audio> element once, synchronously within a user gesture, claims
+// the correct "media playback" audio session category for the rest of the page's
+// Web Audio output too. Call this from the very start of any click/tap handler that
+// is about to touch the AudioContext, before any `await`.
+let audioSessionUnlocked = false;
+function unlockAudioSession() {
+  if (audioSessionUnlocked) return;
+  audioSessionUnlocked = true;
+  try {
+    const el = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+    el.play().then(() => el.pause()).catch(() => {});
+  } catch(_) {}
+}
+
 function getCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -917,9 +935,11 @@ function nowPos() {
 
 async function play(fromPos) {
   if (!audioBuffer) return;
+  unlockAudioSession();
   killSource();
 
   const ctx = getCtx();
+  if (ctx.state !== 'running') { try { await ctx.resume(); } catch(_) {} }
   const pr  = getPlaybackParams();
   if (pr.nsOn) { try { await ensureGate(ctx); } catch(e) { console.warn('Gate worklet:', e); } }
   nodes = buildChain(ctx, pr);
@@ -1319,6 +1339,8 @@ function createMediaRecorder(stream) {
 }
 
 async function startRecording() {
+  unlockAudioSession(); // must run before the getUserMedia await to stay inside the tap gesture
+
   // Diagnose the two most common non-permission reasons getUserMedia fails on mobile,
   // before even attempting it, since the browser's own NotAllowedError message doesn't
   // distinguish them from an actual user denial.
