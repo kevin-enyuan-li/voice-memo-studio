@@ -2,7 +2,9 @@
 
 A single-file, browser-based audio recorder and effects studio. Record a voice memo (or load an existing audio file), trim it, sculpt it with a rack of real-time effects, and export the result as WAV, MP3, or M4A — all client-side, with no server, build step, or install.
 
-Open [index.html](index.html) in a modern browser and it just works.
+**[▶ Try it live](https://kevin-enyuan-li.github.io/voice-memo-studio/)** — runs immediately in your browser, no download needed.
+
+Or grab [index.html](index.html) and open it locally — it's a single file with no build step.
 
 ![Voice Memo Studio screenshot](screenshot.png)
 
