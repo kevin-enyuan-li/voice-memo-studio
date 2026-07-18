@@ -1319,6 +1319,18 @@ function createMediaRecorder(stream) {
 }
 
 async function startRecording() {
+  // Diagnose the two most common non-permission reasons getUserMedia fails on mobile,
+  // before even attempting it, since the browser's own NotAllowedError message doesn't
+  // distinguish them from an actual user denial.
+  if (!window.isSecureContext) {
+    setStatus('Recording needs a secure connection (https). Try the live demo link instead of a plain http:// address.', 'err');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Microphone recording isn’t available here — if you opened this link inside another app (Messages, Instagram, Slack, etc.), open it in Safari/Chrome directly instead.', 'err');
+    return;
+  }
+
   try {
     recordStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -1331,7 +1343,15 @@ async function startRecording() {
       video: false,
     });
   } catch(e) {
-    setStatus('Microphone access denied: ' + e.message, 'err');
+    if (e.name === 'NotAllowedError') {
+      setStatus('Microphone access is blocked for this site. On iPhone Safari: tap "AA" in the address bar → Website Settings → set Microphone to "Allow", then reload. (If that\'s not there, check Settings app → Safari → Microphone, and Settings → Privacy & Security → Microphone → Safari.)', 'err');
+    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+      setStatus('No microphone was found on this device.', 'err');
+    } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
+      setStatus('The microphone is already in use by another app — close it and try again.', 'err');
+    } else {
+      setStatus('Microphone access denied: ' + e.message, 'err');
+    }
     return;
   }
 
