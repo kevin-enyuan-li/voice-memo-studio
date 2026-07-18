@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Memo Studio</title>
+  <style>
+    :root {
+      --bg: #0f0f1a; --card: #16213e; --border: #2d3748;
+      --accent: #7c3aed; --accent2: #a855f7;
+      --text: #e2e8f0; --muted: #94a3b8;
+      --green: #10b981; --amber: #f59e0b; --red: #ef4444; --blue: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px; }
+    .container { max-width: 860px; margin: 0 auto; }
+
+    header { text-align: center; padding: 22px 0 24px; }
+    h1 { font-size: 1.9rem; font-weight: 700;
+      background: linear-gradient(135deg, var(--accent2), #38bdf8);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; margin-bottom: 4px; }
+    header p { color: var(--muted); font-size: .88rem; }
+
+    /* Record bar */
+    .rec-bar { display: flex; align-items: center; justify-content: center;
+      gap: 10px; margin-bottom: 12px; }
+    .btn-rec { padding: 9px 20px; border-radius: 9px; border: 1.5px solid var(--border);
+      background: var(--card); color: var(--text); font-size: .88rem; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; gap: 7px; transition: all .15s; }
+    .btn-rec:hover { border-color: var(--red); color: var(--red); }
+    .btn-rec.recording { background: rgba(239,68,68,.15); border-color: var(--red);
+      color: var(--red); }
+    .rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+      background: var(--red); animation: blink 1s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+    /* Recording panel */
+    .rec-panel { background: var(--card); border-radius: 12px; border: 1px solid var(--red);
+      padding: 16px 18px; margin-bottom: 12px; display: none;
+      align-items: center; gap: 14px; flex-wrap: wrap; }
+    .rec-panel.show { display: flex; }
+    .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
+    .rec-panel.paused .rec-timer { opacity: .55; }
+    .rec-timer { font-size: 1.3rem; font-weight: 700; color: var(--red);
+      font-variant-numeric: tabular-nums; min-width: 52px; }
+    .level-wrap { flex: 1; min-width: 120px; height: 8px; background: var(--border);
+      border-radius: 4px; overflow: hidden; }
+    .level-bar { height: 100%; width: 0%; background: linear-gradient(90deg,var(--green),var(--amber));
+      border-radius: 4px; transition: width .05s; }
+    .btn-stoprec { padding: 8px 18px; border-radius: 8px; border: none;
+      background: var(--red); color: #fff; font-weight: 600; font-size: .88rem;
+      cursor: pointer; transition: opacity .15s; }
+    .btn-stoprec:hover { opacity: .85; }
+    .btn-monitor { padding: 7px 14px; border-radius: 8px; border: 1.5px solid var(--border);
+      background: transparent; color: var(--muted); font-size: .83rem; font-weight: 600;
+      cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .btn-monitor:hover { border-color: var(--text); color: var(--text); }
+    .btn-monitor.direct  { background: rgba(16,185,129,.15); border-color: var(--green); color: var(--green); }
+    .btn-monitor.effects { background: rgba(56,189,248,.15); border-color: var(--blue);  color: var(--blue); }
+    .btn-monitor.bypass-on { background: rgba(245,158,11,.15); border-color: var(--amber); color: var(--amber); }
+
+    /* Drop zone */
+    .drop-zone { border: 2px dashed var(--border); border-radius: 14px;
+      padding: 30px 20px; text-align: center; cursor: pointer;
+      transition: all .2s; background: var(--card); margin-bottom: 14px; }
+    .drop-zone:hover, .drop-zone.over { border-color: var(--accent); background: rgba(124,58,237,.1); }
+    .drop-zone.loaded { border-color: var(--green); border-style: solid; padding: 16px 20px; }
+    .drop-zone input { display: none; }
+    .drop-icon { font-size: 2.4rem; margin-bottom: 8px; }
+    .drop-hint { color: var(--muted); font-size: .9rem; }
+    .drop-hint strong { color: var(--text); }
+    .file-loaded { color: var(--green); font-weight: 600; font-size: 1rem; }
+    .file-meta { color: var(--muted); font-size: .8rem; margin-top: 4px; }
+
+    /* Waveform */
+    .wave-wrap { background: var(--card); border-radius: 12px; padding: 12px 14px;
+      margin-bottom: 14px; display: none; }
+    .wave-wrap.show { display: block; }
+    #waveCanvas { width: 100%; height: 90px; display: block; border-radius: 6px;
+      cursor: pointer; touch-action: none; }
+    .trim-row { display: flex; align-items: center; gap: 8px; margin-top: 10px;
+      flex-wrap: wrap; }
+    .trim-info { font-size: .78rem; color: var(--muted); flex: 1; min-width: 120px; }
+    .trim-times { color: var(--blue); font-weight: 600; }
+    .btn-trim { padding: 5px 13px; border-radius: 7px; border: 1.5px solid var(--blue);
+      background: rgba(56,189,248,.1); color: var(--blue); font-size: .8rem;
+      font-weight: 600; cursor: pointer; transition: all .15s; }
+    .btn-trim:hover { background: rgba(56,189,248,.25); }
+    .btn-trim:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-trim-reset { padding: 5px 11px; border-radius: 7px; border: 1.5px solid var(--border);
+      background: transparent; color: var(--muted); font-size: .8rem; cursor: pointer;
+      transition: all .15s; }
+    .btn-trim-reset:hover { border-color: var(--muted); color: var(--text); }
+    .btn-trim-reset:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-trim-reset:disabled:hover { border-color: var(--border); color: var(--muted); }
+    .btn-trim-reset.loop-on { background: rgba(56,189,248,.15); border-color: var(--blue); color: var(--blue); }
+
+    /* Playback */
+    .playback { display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+      background: var(--card); border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; }
+    .playback.show { display: flex; }
+    .btn-circle { width: 46px; height: 46px; border-radius: 50%; border: none;
+      background: var(--accent); color: #fff; font-size: 1.1rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background .15s, transform .1s; }
+    .btn-circle:hover { background: var(--accent2); }
+    .btn-circle:active { transform: scale(.93); }
+    .btn-sq { width: 34px; height: 34px; border-radius: 7px; border: none;
+      background: var(--border); color: var(--text); font-size: .85rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background .15s; }
+    .btn-sq:hover { background: #4a5568; }
+    .seek-col { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+    .seek-bar { width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
+      background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
+    .seek-bar::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px;
+      border-radius: 50%; background: var(--accent2); cursor: pointer; }
+    .time { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .btn-skip { width: 40px; height: 40px; border-radius: 8px; border: none;
+      background: var(--border); color: var(--muted); font-size: .82rem; line-height: 1.1;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; flex-shrink: 0; transition: background .15s, color .15s; }
+    .btn-skip:hover { background: #4a5568; color: var(--text); }
+    .btn-skip:active { transform: scale(.93); }
+    .skip-s { font-size: .58rem; margin-top: 1px; }
+
+    /* Effects */
+    .fx-section { display: none; margin-bottom: 18px; }
+    .fx-section.show { display: block; }
+    .fx-section h2 { font-size: .78rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--muted); margin-bottom: 11px; }
+    .preset-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+    .preset-row select { flex: 1; min-width: 140px; background: var(--card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-size: .8rem; }
+    .fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px,1fr)); gap: 11px; }
+    .fx-card { background: var(--card); border-radius: 12px; padding: 14px;
+      border: 1px solid var(--border); }
+    .fx-head { display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 11px; }
+    .fx-name { font-weight: 600; font-size: .92rem; display: flex; align-items: center; gap: 7px; }
+    .tog { position: relative; width: 38px; height: 21px; }
+    .tog input { display: none; }
+    .tog-sl { position: absolute; inset: 0; background: var(--border);
+      border-radius: 10px; cursor: pointer; transition: background .2s; }
+    .tog-sl::before { content: ''; position: absolute; width: 15px; height: 15px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .2s; }
+    .tog input:checked + .tog-sl { background: var(--accent); }
+    .tog input:checked + .tog-sl::before { transform: translateX(17px); }
+    .sl-row { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; }
+    .sl-label { font-size: .78rem; color: var(--muted); width: 62px; flex-shrink: 0; }
+    .sl { flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+      background: var(--border); border-radius: 2px; outline: none; cursor: pointer; }
+    .sl::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px;
+      border-radius: 50%; background: var(--accent2); cursor: pointer; }
+    .sl-val { font-size: .78rem; color: var(--text); width: 42px; text-align: right;
+      font-variant-numeric: tabular-nums; }
+
+    /* Status + export */
+    .status { text-align: center; padding: 8px; font-size: .83rem; color: var(--muted); min-height: 30px; }
+    .status.proc { color: var(--amber); } .status.ok { color: var(--green); } .status.err { color: var(--red); }
+    .export-options { display: none; gap: 16px; justify-content: center; align-items: center;
+      flex-wrap: wrap; margin-bottom: 10px; font-size: .78rem; color: var(--muted); }
+    .export-options.show { display: flex; }
+    .export-options label { display: flex; align-items: center; gap: 6px; }
+    .export-options select { background: var(--card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: .78rem; }
+    .export-row { display: none; gap: 11px; justify-content: center; flex-wrap: wrap; }
+    .export-row.show { display: flex; }
+    .btn-export { padding: 11px 26px; border-radius: 10px; border: none;
+      font-size: .93rem; font-weight: 600; cursor: pointer; transition: all .15s;
+      display: flex; align-items: center; gap: 7px; }
+    .btn-wav { background: #1d4ed8; color: #fff; } .btn-wav:hover { background: #2563eb; }
+    .btn-mp3 { background: var(--accent); color: #fff; } .btn-mp3:hover { background: var(--accent2); }
+    .btn-m4a { background: #0d9488; color: #fff; } .btn-m4a:hover { background: #14b8a6; }
+    .btn-lib { background: #4338ca; color: #fff; } .btn-lib:hover { background: #4f46e5; }
+    .btn-export:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* Saved memo library */
+    .library-panel { display: none; background: var(--card); border-radius: 12px;
+      border: 1px solid var(--border); padding: 16px 18px; margin-bottom: 14px; }
+    .library-panel.show { display: block; }
+    .library-header { display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px; }
+    .library-header h2 { font-size: .95rem; font-weight: 700; }
+    .library-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px;
+      overflow-y: auto; }
+    .lib-empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 12px 0; }
+    .lib-row { display: flex; align-items: center; gap: 10px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+    .lib-info { flex: 1; min-width: 0; }
+    .lib-name { font-weight: 600; font-size: .9rem; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; }
+    .lib-meta { color: var(--muted); font-size: .76rem; margin-top: 2px; }
+    @media (max-width: 500px) { .fx-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Voice Memo Studio</h1>
+    <p>Record · Load · Trim · Apply Effects · Export</p>
+  </header>
+
+  <!-- Record bar -->
+  <div class="rec-bar">
+    <button class="btn-rec" id="btnRecord"><span class="rec-dot" style="display:none" id="recDot"></span>🎙 Record New Memo</button>
+    <span style="color:var(--muted);font-size:.83rem">or load a file below</span>
+    <button class="btn-rec" id="btnLibrary">📚 Library</button>
+  </div>
+
+  <!-- Saved memo library -->
+  <div class="library-panel" id="libraryPanel">
+    <div class="library-header">
+      <h2>📚 Saved Memos</h2>
+      <button class="btn-trim-reset" id="btnCloseLibrary">✕ Close</button>
+    </div>
+    <div class="library-list" id="libraryList"></div>
+  </div>
+
+  <!-- Recording panel -->
+  <div class="rec-panel" id="recPanel">
+    <span class="rec-dot"></span>
+    <span id="recStatusLabel" style="color:var(--red);font-weight:600;font-size:.85rem">REC</span>
+    <span class="rec-timer" id="recTimer">0:00</span>
+    <div class="level-wrap"><div class="level-bar" id="levelBar"></div></div>
+    <button class="btn-monitor" id="btnMonitor" title="Click to cycle: Off → 🎙 Direct (min latency) → 🎛 Effects → Off. Use headphones!">🔇 Monitor</button>
+    <button class="btn-monitor" id="btnPauseRec">⏸ Pause</button>
+    <button class="btn-stoprec" id="btnStopRec">■ Stop</button>
+  </div>
+
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept="audio/*">
+    <div id="dropContent">
+      <div class="drop-icon">🎤</div>
+      <div class="drop-hint">Drop your voice memo here or <strong>click to browse</strong></div>
+      <div style="color:var(--muted);font-size:.78rem;margin-top:6px">M4A · MP3 · WAV · AAC · OGG and more</div>
+    </div>
+  </div>
+
+  <!-- Waveform + trim -->
+  <div class="wave-wrap" id="waveWrap">
+    <canvas id="waveCanvas" height="90"></canvas>
+    <div class="trim-row">
+      <span class="trim-info" title="Exports always use the current selection, even without clicking Apply Trim.">Drag <span style="color:var(--blue)">◁ ▷</span> handles to trim &nbsp;
+        <span class="trim-times" id="trimSpan"></span>
+      </span>
+      <button class="btn-trim-reset" id="btnAutoTrim">🔍 Auto-Trim Silence</button>
+      <button class="btn-trim" id="btnApplyTrim" disabled>✂ Apply Trim</button>
+      <button class="btn-trim-reset" id="btnUndoTrim" disabled>↩ Undo Trim</button>
+      <button class="btn-trim-reset" id="btnResetTrim">↺ Reset</button>
+      <button class="btn-trim-reset" id="btnLoop" title="Loop playback within the current trim selection.">🔁 Loop</button>
+    </div>
+  </div>
+
+  <!-- Playback -->
+  <div class="playback" id="playback">
+    <button class="btn-skip" id="btnRew" title="Back 10 seconds">⏪<span class="skip-s">10s</span></button>
+    <button class="btn-circle" id="playBtn">▶</button>
+    <button class="btn-skip" id="btnFwd" title="Forward 10 seconds">⏩<span class="skip-s">10s</span></button>
+    <button class="btn-sq" id="stopBtn">■</button>
+    <div class="seek-col">
+      <input type="range" class="seek-bar" id="seekBar" min="0" max="1000" value="0">
+      <div class="time"><span id="curTime">0:00</span> / <span id="totTime">0:00</span></div>
+    </div>
+    <button class="btn-monitor" id="btnBypass" title="A/B compare: toggle between dry (unprocessed) and fully effected audio.">🎧 Bypass</button>
+  </div>
+
+  <!-- Effects -->
+  <div class="fx-section" id="fxSection">
+    <h2>Effects</h2>
+    <div class="preset-row">
+      <select id="selPreset"><option value="">— Presets —</option></select>
+      <button class="btn-trim-reset" id="btnSavePreset">💾 Save</button>
+      <button class="btn-trim-reset" id="btnDeletePreset" disabled>🗑 Delete</button>
+    </div>
+    <div class="fx-grid">
+
+      <div class="fx-card">
+        <div class="fx-head"><div class="fx-name">🔊 Volume</div></div>
+        <div class="sl-row">
+          <span class="sl-label">Level</span>
+          <input type="range" class="sl" id="sVol" min="0" max="200" value="100">
+          <span class="sl-val" id="vVol">100%</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">📈 Fade In</div>
+          <label class="tog"><input type="checkbox" id="tFadeIn"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Duration</span>
+          <input type="range" class="sl" id="sFadeInDur" min="5" max="200" value="30">
+          <span class="sl-val" id="vFadeInDur">3.0s</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">📉 Fade Out</div>
+          <label class="tog"><input type="checkbox" id="tFade"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Duration</span>
+          <input type="range" class="sl" id="sFadeDur" min="5" max="200" value="30">
+          <span class="sl-val" id="vFadeDur">3.0s</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🏛️ Reverb</div>
+          <label class="tog"><input type="checkbox" id="tRev"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Wet</span>
+          <input type="range" class="sl" id="sRevWet" min="0" max="100" value="40">
+          <span class="sl-val" id="vRevWet">40%</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Decay</span>
+          <input type="range" class="sl" id="sRevDec" min="5" max="60" value="15">
+          <span class="sl-val" id="vRevDec">1.5s</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🔁 Echo</div>
+          <label class="tog"><input type="checkbox" id="tEcho"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Delay</span>
+          <input type="range" class="sl" id="sEchoDly" min="50" max="800" value="300">
+          <span class="sl-val" id="vEchoDly">300ms</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Feedback</span>
+          <input type="range" class="sl" id="sEchoFb" min="0" max="80" value="40">
+          <span class="sl-val" id="vEchoFb">40%</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Wet</span>
+          <input type="range" class="sl" id="sEchoWet" min="0" max="100" value="50">
+          <span class="sl-val" id="vEchoWet">50%</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🎸 Bass</div>
+          <label class="tog"><input type="checkbox" id="tBass"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Boost</span>
+          <input type="range" class="sl" id="sBassGain" min="-12" max="12" value="0">
+          <span class="sl-val" id="vBassGain">0 dB</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Freq</span>
+          <input type="range" class="sl" id="sBassFreq" min="60" max="400" value="150">
+          <span class="sl-val" id="vBassFreq">150 Hz</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">✨ Treble</div>
+          <label class="tog"><input type="checkbox" id="tTreb"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Boost</span>
+          <input type="range" class="sl" id="sTrebGain" min="-12" max="12" value="0">
+          <span class="sl-val" id="vTrebGain">0 dB</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Freq</span>
+          <input type="range" class="sl" id="sTrebFreq" min="1000" max="12000" value="4000">
+          <span class="sl-val" id="vTrebFreq">4.0 kHz</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🔥 Warmth</div>
+          <label class="tog"><input type="checkbox" id="tWarm"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Drive</span>
+          <input type="range" class="sl" id="sWarm" min="1" max="400" value="50">
+          <span class="sl-val" id="vWarm">50</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🏠 Nice Room</div>
+          <label class="tog"><input type="checkbox" id="tNR"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Size</span>
+          <input type="range" class="sl" id="sNRSize" min="1" max="100" value="30">
+          <span class="sl-val" id="vNRSize">6m</span>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Wet</span>
+          <input type="range" class="sl" id="sNRWet" min="0" max="100" value="35">
+          <span class="sl-val" id="vNRWet">35%</span>
+        </div>
+      </div>
+
+      <div class="fx-card">
+        <div class="fx-head">
+          <div class="fx-name">🔇 Noise Reduce</div>
+          <label class="tog"><input type="checkbox" id="tNS"><span class="tog-sl"></span></label>
+        </div>
+        <div class="sl-row">
+          <span class="sl-label">Strength</span>
+          <input type="range" class="sl" id="sNSStr" min="1" max="100" value="40">
+          <span class="sl-val" id="vNSStr">40%</span>
+        </div>
+        <div class="sl-row" style="margin-top:4px">
+          <span class="sl-label" style="color:var(--muted);font-size:.72rem;width:100%;line-height:1.3">
+            Gates signal below threshold · combine with EQ for best results</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="export-options" id="exportOptions">
+    <label>MP3 quality
+      <select id="selMp3Bitrate">
+        <option value="96">96 kbps</option>
+        <option value="128" selected>128 kbps</option>
+        <option value="192">192 kbps</option>
+        <option value="320">320 kbps</option>
+      </select>
+    </label>
+    <label>Sample rate
+      <select id="selExportRate">
+        <option value="orig" selected>Original</option>
+        <option value="44100">44.1 kHz</option>
+        <option value="22050">22.05 kHz</option>
+        <option value="16000">16 kHz</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="chkExportMono"> Mono</label>
+  </div>
+
+  <div class="export-row" id="exportRow">
+    <button class="btn-export btn-wav" id="btnWav" disabled>💾 Export WAV</button>
+    <button class="btn-export btn-mp3" id="btnMp3" disabled>🎵 Export MP3</button>
+    <button class="btn-export btn-m4a" id="btnM4a" disabled>🍎 Export M4A</button>
+    <button class="btn-export btn-lib" id="btnSaveLibrary" disabled>📚 Save to Library</button>
+  </div>
+
+  <div style="height:30px"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
+<script>
+// ── Playback state ─────────────────────────────────────────────────────────
+let audioCtx = null;
+let audioBuffer = null;
+let nodes = null;
+let srcNode = null;
+let isPlaying = false;
+let playOffset = 0;
+let playStarted = 0;
+let rafId = null;
+let baseName = 'output';
+let seekDragging = false;
+let bypassOn = false; // ephemeral A/B compare toggle — not persisted, doesn't affect export
+
+// ── Preferences (localStorage) ─────────────────────────────────────────────
+const PREF_KEY   = 'vms_prefs_v1';
+const PRESET_KEY = 'vms_presets_v1';
+const SLIDER_IDS = ['sVol','sFadeInDur','sFadeDur','sRevWet','sRevDec','sEchoDly','sEchoFb','sEchoWet',
+                    'sBassGain','sBassFreq','sTrebGain','sTrebFreq','sWarm','sNRSize','sNRWet','sNSStr'];
+const TOGGLE_IDS = ['tFadeIn','tFade','tRev','tEcho','tBass','tTreb','tWarm','tNR','tNS'];
+
+function collectSettings() {
+  const s = {};
+  SLIDER_IDS.forEach(id => { s[id] = $(id).value; });
+  TOGGLE_IDS.forEach(id => { s[id] = $(id).checked; });
+  return s;
+}
+
+// Applies a saved settings object to the sliders/toggles. Does NOT refresh the
+// value labels itself (sliderDefs isn't defined yet at the point loadPrefs()
+// first runs) — callers refresh labels afterward once sliderDefs exists.
+function applySettings(obj) {
+  if (!obj) return;
+  SLIDER_IDS.forEach(id => { if (obj[id] != null) $(id).value = obj[id]; });
+  TOGGLE_IDS.forEach(id => { if (obj[id] != null) $(id).checked = obj[id]; });
+}
+
+function savePrefs() {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify(collectSettings())); } catch(_) {}
+}
+
+function loadPrefs() {
+  let prefs;
+  try { prefs = JSON.parse(localStorage.getItem(PREF_KEY)); } catch(_) {}
+  applySettings(prefs);
+}
+
+// ── Named effect presets (separate from the auto-saved "last used" prefs) ──
+function loadPresetStore() {
+  try { return JSON.parse(localStorage.getItem(PRESET_KEY)) || {}; } catch(_) { return {}; }
+}
+function savePresetStore(store) {
+  try { localStorage.setItem(PRESET_KEY, JSON.stringify(store)); } catch(_) {}
+}
+function refreshPresetSelect(selectName) {
+  const store = loadPresetStore();
+  const names = Object.keys(store).sort((a, b) => a.localeCompare(b));
+  selPreset.innerHTML = '<option value="">— Presets —</option>' +
+    names.map(n => `<option value="${n.replace(/"/g,'&quot;')}">${n}</option>`).join('');
+  selPreset.value = names.includes(selectName) ? selectName : '';
+  btnDeletePreset.disabled = !selPreset.value;
+}
+
+// ── AudioWorklet noise gate ────────────────────────────────────────────────
+const GATE_SRC = `
+class NoiseGate extends AudioWorkletProcessor {
+  constructor() { super(); this._env = 0; }
+  static get parameterDescriptors() {
+    return [
+      { name: 'threshold', defaultValue: 0.015, minValue: 0, maxValue: 1 },
+      { name: 'reduction', defaultValue: 0.02,  minValue: 0, maxValue: 1 },
+      { name: 'smooth',    defaultValue: 0.997, minValue: 0, maxValue: 1 }
+    ];
+  }
+  process(inputs, outputs, params) {
+    const inp = inputs[0], out = outputs[0];
+    if (!inp || !inp.length) return true;
+    const thr = params.threshold[0], red = params.reduction[0], smo = params.smooth[0];
+    for (let i = 0; i < (inp[0]||[]).length; i++) {
+      let peak = 0;
+      for (const ch of inp) peak = Math.max(peak, Math.abs(ch[i]||0));
+      this._env = peak > this._env ? peak : this._env * smo;
+      const g = this._env > thr ? 1.0 : red;
+      for (let c = 0; c < out.length; c++) out[c][i] = (inp[c]?.[i]||0) * g;
+    }
+    return true;
+  }
+}
+registerProcessor('noise-gate', NoiseGate);
+`;
+let _gateURL = null;
+const _gateLoaded = new WeakSet();
+function gateURL() {
+  if (!_gateURL) _gateURL = URL.createObjectURL(new Blob([GATE_SRC], {type:'application/javascript'}));
+  return _gateURL;
+}
+async function ensureGate(ctx) {
+  if (_gateLoaded.has(ctx)) return;
+  await ctx.audioWorklet.addModule(gateURL());
+  _gateLoaded.add(ctx);
+}
+
+// ── Trim state ─────────────────────────────────────────────────────────────
+let trimStart = 0;
+let trimEnd = 0;
+let trimDrag = null; // null | 'start' | 'end'
+let preTrimBuffer = null; // single-level undo, set right before a destructive Apply Trim
+let loopOn = false; // loop playback within [trimStart, trimEnd)
+
+// ── Waveform cache ─────────────────────────────────────────────────────────
+let waveCache = null;  // ImageData of raw waveform (physical pixels)
+let wavePW = 0, wavePH = 0; // physical pixel dims of cache
+
+// ── Recording state ────────────────────────────────────────────────────────
+let mediaRecorder = null;
+let recordChunks = [];
+let recordStream = null;
+let micSourceNode = null;   // MediaStreamSource inside main audioCtx
+let recAnalyser = null;
+let isRecording = false;
+let isPaused = false;
+let recStartTime = 0;
+let recPausedTotal = 0; // ms accumulated across all pauses this recording
+let pauseStartedAt = 0;
+let levelRafId = null;
+let recTimerRafId = null;
+
+// ── Monitor state ──────────────────────────────────────────────────────────
+let monitorMode   = 'off';  // 'off' | 'direct' | 'effects'
+let monitorChain  = null;
+let monitorCtx    = null;   // dedicated low-latency AudioContext
+let monitorMicSrc = null;   // MediaStreamSource inside monitorCtx
+// convenience alias used throughout
+const isMonitoring = () => monitorMode !== 'off';
+
+// ── DOM ────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const dropZone    = $('dropZone');
+const fileInput   = $('fileInput');
+const dropContent = $('dropContent');
+const waveWrap    = $('waveWrap');
+const waveCanvas  = $('waveCanvas');
+const wctx        = waveCanvas.getContext('2d');
+const playback    = $('playback');
+const fxSection   = $('fxSection');
+const selPreset      = $('selPreset');
+const btnSavePreset  = $('btnSavePreset');
+const btnDeletePreset= $('btnDeletePreset');
+const exportRow   = $('exportRow');
+const exportOptions = $('exportOptions');
+const playBtn     = $('playBtn');
+const stopBtn     = $('stopBtn');
+const btnRew      = $('btnRew');
+const btnFwd      = $('btnFwd');
+const btnBypass   = $('btnBypass');
+const seekBar     = $('seekBar');
+const curTimeEl   = $('curTime');
+const totTimeEl   = $('totTime');
+const statusEl    = $('status');
+const btnWav      = $('btnWav');
+const btnMp3      = $('btnMp3');
+const btnM4a      = $('btnM4a');
+function setExportBtns(disabled) { btnWav.disabled = btnMp3.disabled = btnM4a.disabled = btnSaveLibrary.disabled = disabled; }
+const btnApplyTrim= $('btnApplyTrim');
+const btnUndoTrim = $('btnUndoTrim');
+const btnAutoTrim = $('btnAutoTrim');
+const btnLoop     = $('btnLoop');
+const trimSpan    = $('trimSpan');
+const recPanel    = $('recPanel');
+const btnRecord   = $('btnRecord');
+const btnStopRec  = $('btnStopRec');
+const btnPauseRec = $('btnPauseRec');
+const btnMonitor  = $('btnMonitor');
+const levelBar    = $('levelBar');
+const recTimerEl  = $('recTimer');
+const recStatusLabel = $('recStatusLabel');
+const btnLibrary      = $('btnLibrary');
+const libraryPanel    = $('libraryPanel');
+const libraryList     = $('libraryList');
+const btnCloseLibrary = $('btnCloseLibrary');
+const btnSaveLibrary  = $('btnSaveLibrary');
+const dropContentDefault = dropContent.innerHTML;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function resetMemo() {
+  killSource();
+  isPlaying = false; playOffset = 0;
+  audioBuffer = null;
+  trimStart = 0; trimEnd = 0; trimDrag = null;
+  preTrimBuffer = null;
+  btnUndoTrim.disabled = true;
+  bypassOn = false;
+  btnBypass.classList.remove('bypass-on');
+  btnBypass.textContent = '🎧 Bypass';
+  loopOn = false;
+  btnLoop.classList.remove('loop-on');
+  waveCache = null;
+
+  playBtn.textContent = '▶';
+  seekBar.value = 0;
+  curTimeEl.textContent = '0:00';
+  totTimeEl.textContent = '0:00';
+
+  waveWrap.classList.remove('show');
+  playback.classList.remove('show');
+  fxSection.classList.remove('show');
+  exportOptions.classList.remove('show');
+  exportRow.classList.remove('show');
+  setExportBtns(true);
+
+  dropZone.classList.remove('loaded');
+  dropContent.innerHTML = dropContentDefault;
+
+  setStatus('');
+}
+function fmt(s) {
+  s = Math.max(0, s);
+  return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+}
+function setStatus(msg, cls='') {
+  statusEl.textContent = msg; statusEl.className = 'status ' + cls;
+}
+function getCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function pEl(id) { return $(id); }
+function checked(id) { return $(id).checked; }
+function val(id) { return parseFloat($(id).value); }
+
+// ── Params ─────────────────────────────────────────────────────────────────
+function getParams() {
+  return {
+    volume:   val('sVol') / 100,
+    fadeInOn:  checked('tFadeIn'),
+    fadeInDur: val('sFadeInDur') / 10,
+    fadeOn:   checked('tFade'),
+    fadeDur:  val('sFadeDur') / 10,
+    revOn:    checked('tRev'),
+    revWet:   val('sRevWet') / 100,
+    revDecay: val('sRevDec') / 10,
+    echoOn:   checked('tEcho'),
+    echoDly:  val('sEchoDly') / 1000,
+    echoFb:   val('sEchoFb') / 100,
+    echoWet:  val('sEchoWet') / 100,
+    bassOn:   checked('tBass'),
+    bassGain: val('sBassGain'),
+    bassFreq: val('sBassFreq'),
+    trebOn:   checked('tTreb'),
+    trebGain: val('sTrebGain'),
+    trebFreq: val('sTrebFreq'),
+    warmOn:   checked('tWarm'),
+    warmDrive:val('sWarm'),
+    nrOn:     checked('tNR'),
+    nrSize:   val('sNRSize') / 100,       // 0..1
+    nrWet:    val('sNRWet') / 100,
+    nsOn:     checked('tNS'),
+    nsStr:    val('sNSStr') / 100,        // 0..1
+  };
+}
+
+// Forces every effect off and volume to unity — the "dry" side of the A/B bypass toggle.
+function bypassedParams(pr) {
+  return { ...pr, volume: 1, fadeInOn: false, fadeOn: false, revOn: false,
+           echoOn: false, bassOn: false, trebOn: false, warmOn: false,
+           nrOn: false, nsOn: false };
+}
+
+// Params for the currently-playing buffer, honoring the Bypass toggle.
+// Export intentionally does NOT use this — it always calls getParams() directly,
+// so exporting while bypassed still renders the fully-effected audio.
+function getPlaybackParams() {
+  const pr = getParams();
+  return bypassOn ? bypassedParams(pr) : pr;
+}
+
+// ── Effect helpers ─────────────────────────────────────────────────────────
+function reverbIR(ctx, decay) {
+  const len = Math.ceil(ctx.sampleRate * decay);
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++)
+      d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 5);
+  }
+  return buf;
+}
+// Nice Room: multi-tap early reflections + short diffuse tail
+function niceRoomIR(ctx, sizeNorm) {
+  const sr   = ctx.sampleRate;
+  // Duration: 60ms (tiny) to 550ms (large)
+  const dur  = 0.06 + sizeNorm * 0.49;
+  const len  = Math.ceil(sr * dur);
+  const buf  = ctx.createBuffer(2, len, sr);
+  // Early reflection delays (fractions of a second, scaled by size)
+  const refls = [
+    [0.008, 0.82], [0.014, 0.66], [0.021, 0.57],
+    [0.031, 0.47], [0.044, 0.38], [0.060, 0.30],
+    [0.080, 0.23], [0.104, 0.17], [0.133, 0.12],
+  ];
+  for (let c = 0; c < 2; c++) {
+    const d    = buf.getChannelData(c);
+    const sprd = c === 0 ? 1.00 : 1.038; // slight stereo spread
+    refls.forEach(([t, g], idx) => {
+      const pos = Math.floor(t * (0.25 + sizeNorm * 2.8) * sprd * sr);
+      if (pos < len) d[pos] += g * (idx % 2 === 0 ? 1 : -0.88) * (0.88 + Math.random() * 0.24);
+    });
+    // Diffuse tail after early reflections
+    const tailStart = Math.floor(Math.max(0.018, 0.055 * sizeNorm) * sr);
+    const decay     = 9 - sizeNorm * 6;   // fast decay for small rooms
+    for (let i = tailStart; i < len; i++) {
+      const t   = (i - tailStart) / sr;
+      d[i] += (Math.random() * 2 - 1) * 0.11 * Math.exp(-decay * t);
+    }
+  }
+  return buf;
+}
+
+function distCurve(amount) {
+  const n = 256, curve = new Float32Array(n), k = Math.max(amount, 0.01);
+  for (let i = 0; i < n; i++) {
+    const x = (i*2)/n - 1;
+    curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
+// ── Build audio graph ──────────────────────────────────────────────────────
+function buildChain(ctx, pr) {
+  const input = ctx.createGain(); input.gain.value = pr.volume;
+  const bass  = ctx.createBiquadFilter();
+  bass.type = 'lowshelf'; bass.frequency.value = pr.bassFreq;
+  bass.gain.value = pr.bassOn ? pr.bassGain : 0;
+  const treb  = ctx.createBiquadFilter();
+  treb.type = 'highshelf'; treb.frequency.value = pr.trebFreq;
+  treb.gain.value = pr.trebOn ? pr.trebGain : 0;
+  const dist  = ctx.createWaveShaper();
+  dist.curve  = distCurve(pr.warmOn ? pr.warmDrive : 0); dist.oversample = '2x';
+  const dryGain = ctx.createGain(); dryGain.gain.value = 1;
+  const echoDly = ctx.createDelay(3.0); echoDly.delayTime.value = pr.echoDly;
+  const echoFb  = ctx.createGain(); echoFb.gain.value = pr.echoFb;
+  const echoWet = ctx.createGain(); echoWet.gain.value = pr.echoOn ? pr.echoWet : 0;
+  const conv    = ctx.createConvolver(); conv.buffer = reverbIR(ctx, Math.max(pr.revDecay, 0.5));
+  const revWet  = ctx.createGain(); revWet.gain.value = pr.revOn ? pr.revWet : 0;
+  const master  = ctx.createGain(); master.gain.value = 0.88;
+
+  // Nice Room path
+  const nrConv  = ctx.createConvolver();
+  nrConv.buffer = niceRoomIR(ctx, pr.nrSize);
+  const nrWet   = ctx.createGain(); nrWet.gain.value = pr.nrOn ? pr.nrWet : 0;
+
+  // Noise gate (AudioWorklet, may be absent if not yet loaded)
+  let gateNode = null;
+  if (pr.nsOn) {
+    try {
+      const thr = 0.004 + pr.nsStr * 0.056; // 0.004..0.06
+      const red = 0.5   - pr.nsStr * 0.485; // 0.5..0.015
+      const smo = 0.994 + pr.nsStr * 0.005; // 0.994..0.999
+      gateNode = new AudioWorkletNode(ctx, 'noise-gate',
+        { parameterData: { threshold: thr, reduction: red, smooth: smo } });
+    } catch(_) { /* worklet not ready yet — graceful no-op */ }
+  }
+
+  // Routing
+  if (gateNode) { input.connect(gateNode); gateNode.connect(bass); }
+  else           { input.connect(bass); }
+  bass.connect(treb); treb.connect(dist);
+  dist.connect(dryGain); dryGain.connect(master);
+  dist.connect(echoDly); echoDly.connect(echoFb); echoFb.connect(echoDly);
+  echoDly.connect(echoWet); echoWet.connect(master);
+  dist.connect(conv);    conv.connect(revWet);  revWet.connect(master);
+  dist.connect(nrConv);  nrConv.connect(nrWet); nrWet.connect(master);
+  master.connect(ctx.destination);
+
+  return { input, gateNode, bass, treb, dist, dryGain,
+           echoDly, echoFb, echoWet, conv, revWet, nrConv, nrWet, master };
+}
+
+function patchNodes(nd, pr) {
+  nd.input.gain.value      = pr.volume;
+  nd.bass.gain.value       = pr.bassOn ? pr.bassGain : 0;
+  nd.bass.frequency.value  = pr.bassFreq;
+  nd.treb.gain.value       = pr.trebOn ? pr.trebGain : 0;
+  nd.treb.frequency.value  = pr.trebFreq;
+  nd.dist.curve            = distCurve(pr.warmOn ? pr.warmDrive : 0);
+  nd.echoDly.delayTime.value = pr.echoDly;
+  nd.echoFb.gain.value     = pr.echoFb;
+  nd.echoWet.gain.value    = pr.echoOn ? pr.echoWet : 0;
+  nd.revWet.gain.value     = pr.revOn  ? pr.revWet  : 0;
+  nd.nrWet.gain.value      = pr.nrOn   ? pr.nrWet   : 0;
+  // nrConv.buffer can't change live — size change requires restart (handled below)
+  if (nd.gateNode) {
+    try {
+      const thr = 0.004 + pr.nsStr * 0.056;
+      const red = 0.5   - pr.nsStr * 0.485;
+      nd.gateNode.parameters.get('threshold').value = pr.nsOn ? thr : 0;
+      nd.gateNode.parameters.get('reduction').value = pr.nsOn ? red : 1;
+    } catch(_) {}
+  }
+}
+
+// Schedules fade-in + fade-out on a single gain param (they share master.gain,
+// so both must go through one cancelScheduledValues call, not two independent ones).
+// `atTime` is the automation-timeline origin (ctx.currentTime for live playback,
+// 0 for offline rendering); `from` is the position the buffer starts playing at;
+// `dur` is the buffer's total duration. Assumes fade-in/out durations don't
+// overlap each other — reasonable for typical fade lengths.
+const MASTER_GAIN = 0.88;
+function scheduleGainEnvelope(gainParam, atTime, pr, dur, from) {
+  gainParam.cancelScheduledValues(atTime);
+
+  let startGain = MASTER_GAIN;
+  let fadeInDur = 0;
+  if (pr.fadeInOn) {
+    fadeInDur = Math.min(pr.fadeInDur, dur);
+    if (fadeInDur > 0 && from < fadeInDur) startGain = MASTER_GAIN * (from / fadeInDur);
+  }
+  gainParam.setValueAtTime(startGain, atTime);
+  if (pr.fadeInOn && fadeInDur > 0 && from < fadeInDur) {
+    gainParam.linearRampToValueAtTime(MASTER_GAIN, atTime + (fadeInDur - from));
+  }
+
+  if (pr.fadeOn) {
+    const remaining = dur - from;
+    const fadeOutDur = Math.min(pr.fadeDur, remaining);
+    const fadeAt = atTime + Math.max(0, remaining - fadeOutDur);
+    gainParam.setValueAtTime(MASTER_GAIN, fadeAt);
+    gainParam.linearRampToValueAtTime(0, fadeAt + fadeOutDur);
+  }
+}
+
+// ── Playback ───────────────────────────────────────────────────────────────
+function nowPos() {
+  if (!audioCtx || !isPlaying) return playOffset;
+  let pos = playOffset + (audioCtx.currentTime - playStarted);
+  // The native loop wraps audio in hardware, but doesn't tell us the wrapped
+  // position — reconstruct it for the seek bar / waveform cursor.
+  if (loopOn && srcNode && srcNode.loop) {
+    const loopLen = trimEnd - trimStart;
+    if (loopLen > 0 && pos > trimEnd) pos = trimStart + ((pos - trimStart) % loopLen);
+  }
+  return pos;
+}
+
+async function play(fromPos) {
+  if (!audioBuffer) return;
+  killSource();
+
+  const ctx = getCtx();
+  const pr  = getPlaybackParams();
+  if (pr.nsOn) { try { await ensureGate(ctx); } catch(e) { console.warn('Gate worklet:', e); } }
+  nodes = buildChain(ctx, pr);
+
+  srcNode = ctx.createBufferSource();
+  srcNode.buffer = audioBuffer;
+  srcNode.connect(nodes.input);
+
+  const canLoop = loopOn && (trimEnd - trimStart) > 0.05;
+  let from = (fromPos !== undefined) ? Math.max(0, fromPos) : playOffset;
+  if (canLoop) from = Math.min(Math.max(from, trimStart), trimEnd);
+  playOffset  = from;
+  playStarted = ctx.currentTime;
+
+  if (canLoop) {
+    srcNode.loop = true;
+    srcNode.loopStart = trimStart;
+    srcNode.loopEnd = trimEnd;
+  }
+  srcNode.start(0, from);
+
+  // Schedule fade-in / fade-out. Skipped while looping: the envelope is a one-shot
+  // ramp scheduled against wall-clock time from the FULL clip's duration, so on an
+  // infinitely-repeating loop it would eventually ramp to 0 and never come back —
+  // audio would just go silent partway through looping and stay that way.
+  const envelopePr = canLoop ? { ...pr, fadeInOn: false, fadeOn: false } : pr;
+  scheduleGainEnvelope(nodes.master.gain, ctx.currentTime, envelopePr, audioBuffer.duration, from);
+
+  isPlaying = true;
+  playBtn.textContent = '⏸';
+
+  srcNode.onended = () => {
+    if (isPlaying) {
+      isPlaying = false; playOffset = 0;
+      playBtn.textContent = '▶';
+      seekBar.value = 0; curTimeEl.textContent = '0:00';
+      cancelAnimationFrame(rafId);
+      renderWave();
+    }
+  };
+  tickSeek();
+}
+
+function pausePlay() {
+  if (!isPlaying) { play(); return; }
+  playOffset = Math.min(nowPos(), audioBuffer.duration);
+  killSource(); isPlaying = false; playBtn.textContent = '▶';
+}
+
+function stop() {
+  killSource(); isPlaying = false; playOffset = 0;
+  playBtn.textContent = '▶'; seekBar.value = 0; curTimeEl.textContent = '0:00';
+  cancelAnimationFrame(rafId);
+  renderWave();
+}
+
+function killSource() {
+  if (srcNode) { srcNode.onended = null; try { srcNode.stop(); } catch(_){} srcNode = null; }
+  cancelAnimationFrame(rafId);
+}
+
+function tickSeek() {
+  if (!isPlaying || !audioBuffer) return;
+  const pos = Math.min(nowPos(), audioBuffer.duration);
+  if (!seekDragging) {
+    seekBar.value = (pos / audioBuffer.duration) * 1000;
+    curTimeEl.textContent = fmt(pos);
+  }
+  renderWave(seekDragging ? (seekBar.value / 1000) * audioBuffer.duration : pos);
+  rafId = requestAnimationFrame(tickSeek);
+}
+
+function seekToPos(pos) {
+  if (!audioBuffer) return;
+  playOffset = Math.max(0, Math.min(pos, audioBuffer.duration));
+  seekBar.value = (playOffset / audioBuffer.duration) * 1000;
+  curTimeEl.textContent = fmt(playOffset);
+  if (isPlaying) play(playOffset);
+  else renderWave();
+}
+
+function skipBy(secs) {
+  if (!audioBuffer) return;
+  seekToPos(Math.max(0, Math.min(nowPos() + secs, audioBuffer.duration)));
+}
+
+// ── Waveform ───────────────────────────────────────────────────────────────
+function initWave() {
+  if (!audioBuffer) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W   = waveCanvas.offsetWidth;
+  const H   = waveCanvas.offsetHeight;
+  const pW  = Math.floor(W * dpr);
+  const pH  = Math.floor(H * dpr);
+  waveCanvas.width  = pW;
+  waveCanvas.height = pH;
+  wavePW = pW; wavePH = pH;
+
+  const data = audioBuffer.getChannelData(0);
+  const step = Math.ceil(data.length / pW);
+  const mid  = pH / 2;
+
+  wctx.fillStyle = '#16213e';
+  wctx.fillRect(0, 0, pW, pH);
+
+  const grad = wctx.createLinearGradient(0, 0, 0, pH);
+  grad.addColorStop(0, '#a855f7'); grad.addColorStop(0.5, '#7c3aed'); grad.addColorStop(1, '#a855f7');
+  wctx.fillStyle = grad;
+
+  for (let x = 0; x < pW; x++) {
+    let mn = 1, mx = -1;
+    for (let j = 0; j < step; j++) {
+      const v = data[x*step+j] || 0;
+      if (v < mn) mn = v; if (v > mx) mx = v;
+    }
+    const y0 = mid + mn * mid * 0.9;
+    const y1 = mid + mx * mid * 0.9;
+    wctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  }
+  wctx.strokeStyle = 'rgba(255,255,255,0.08)'; wctx.lineWidth = 1;
+  wctx.beginPath(); wctx.moveTo(0, mid); wctx.lineTo(pW, mid); wctx.stroke();
+
+  waveCache = wctx.getImageData(0, 0, pW, pH);
+  renderWave();
+}
+
+function renderWave(cursorPos) {
+  if (!waveCache || !audioBuffer) return;
+  const dpr = window.devicePixelRatio || 1;
+  const pW  = waveCanvas.width, pH = waveCanvas.height;
+
+  // Rebuild cache if canvas resized
+  if (pW !== wavePW || pH !== wavePH) { initWave(); return; }
+
+  wctx.putImageData(waveCache, 0, 0);
+
+  // Overlay in CSS pixels via scale
+  wctx.save();
+  wctx.scale(dpr, dpr);
+  const W = pW / dpr, H = pH / dpr;
+  const dur = audioBuffer.duration;
+
+  const sx = (trimStart / dur) * W;
+  const ex = (trimEnd   / dur) * W;
+
+  // Darken excluded regions
+  wctx.fillStyle = 'rgba(0,0,0,0.52)';
+  if (trimStart > 0.01)       wctx.fillRect(0, 0, sx, H);
+  if (trimEnd < dur - 0.01)   wctx.fillRect(ex, 0, W - ex, H);
+
+  // Trim lines
+  wctx.lineWidth = 2;
+  wctx.strokeStyle = '#38bdf8';
+  wctx.beginPath(); wctx.moveTo(sx, 0); wctx.lineTo(sx, H); wctx.stroke();
+  wctx.beginPath(); wctx.moveTo(ex, 0); wctx.lineTo(ex, H); wctx.stroke();
+
+  // Handle triangles
+  const mid = H/2, hs = 9;
+  wctx.fillStyle = '#38bdf8';
+  wctx.beginPath();
+  wctx.moveTo(sx, mid-hs); wctx.lineTo(sx+hs+3, mid); wctx.lineTo(sx, mid+hs);
+  wctx.closePath(); wctx.fill();
+  wctx.beginPath();
+  wctx.moveTo(ex, mid-hs); wctx.lineTo(ex-hs-3, mid); wctx.lineTo(ex, mid+hs);
+  wctx.closePath(); wctx.fill();
+
+  // Playback cursor
+  if (cursorPos !== undefined) {
+    const cx = (cursorPos / dur) * W;
+    wctx.strokeStyle = 'rgba(255,255,255,0.88)'; wctx.lineWidth = 1.5;
+    wctx.beginPath(); wctx.moveTo(cx, 0); wctx.lineTo(cx, H); wctx.stroke();
+  }
+
+  wctx.restore();
+}
+
+// ── Trim ───────────────────────────────────────────────────────────────────
+function updateTrimDisplay() {
+  if (!audioBuffer) return;
+  trimSpan.textContent = `${fmt(trimStart)} → ${fmt(trimEnd)}`;
+  const active = trimStart > 0.01 || trimEnd < audioBuffer.duration - 0.01;
+  btnApplyTrim.disabled = !active;
+}
+
+function sliceBuffer(buf, startT, endT) {
+  const sr  = buf.sampleRate;
+  const nCh = buf.numberOfChannels;
+  const s0  = Math.floor(startT * sr);
+  const s1  = Math.ceil(endT   * sr);
+  const newLen = Math.max(1, s1 - s0);
+
+  const newBuf = (audioCtx || new AudioContext()).createBuffer(nCh, newLen, sr);
+  for (let c = 0; c < nCh; c++)
+    newBuf.getChannelData(c).set(buf.getChannelData(c).subarray(s0, s1));
+  return newBuf;
+}
+
+// Returns the buffer that export should render: the current trim selection
+// sliced non-destructively, or the full buffer if no trim is active. Does not
+// require "Apply Trim" to have been clicked.
+function getExportBuffer() {
+  if (!audioBuffer) return null;
+  const active = trimStart > 0.01 || trimEnd < audioBuffer.duration - 0.01;
+  return active ? sliceBuffer(audioBuffer, trimStart, trimEnd) : audioBuffer;
+}
+
+function applyTrim() {
+  if (!audioBuffer) return;
+  preTrimBuffer = audioBuffer;
+  btnUndoTrim.disabled = false;
+
+  audioBuffer = sliceBuffer(audioBuffer, trimStart, trimEnd);
+  trimStart = 0; trimEnd = audioBuffer.duration;
+  playOffset = 0; stop();
+  totTimeEl.textContent = fmt(audioBuffer.duration);
+  updateTrimDisplay();
+  waveCache = null;
+  initWave();
+  setStatus('Trim applied.', 'ok'); setTimeout(() => setStatus(''), 2000);
+}
+
+function undoTrim() {
+  if (!preTrimBuffer) return;
+  audioBuffer = preTrimBuffer;
+  preTrimBuffer = null;
+  btnUndoTrim.disabled = true;
+
+  trimStart = 0; trimEnd = audioBuffer.duration;
+  playOffset = 0; stop();
+  totTimeEl.textContent = fmt(audioBuffer.duration);
+  updateTrimDisplay();
+  waveCache = null;
+  initWave();
+  setStatus('Trim undone.', 'ok'); setTimeout(() => setStatus(''), 2000);
+}
+
+// Keeps a currently-looping source's hardware loop points in sync with the
+// trim handles, so dragging them while Loop is on retunes the loop live.
+function syncLoopBounds() {
+  if (loopOn && srcNode && srcNode.loop && trimEnd - trimStart > 0.05) {
+    try { srcNode.loopStart = trimStart; srcNode.loopEnd = trimEnd; } catch(_) {}
+  }
+}
+
+function resetTrim() {
+  if (!audioBuffer) return;
+  trimStart = 0; trimEnd = audioBuffer.duration;
+  updateTrimDisplay(); renderWave(isPlaying ? nowPos() : undefined);
+  syncLoopBounds();
+}
+
+// Scans ~20ms RMS-energy frames to find where non-silent audio starts/ends,
+// relative to the buffer's own peak (so it adapts to quiet vs. loud recordings).
+// Returns null when nothing is clearly above the noise floor (don't trim).
+function detectSilenceBounds(buf, thresholdRatio = 0.08, padding = 0.15) {
+  const sr = buf.sampleRate;
+  const nCh = buf.numberOfChannels;
+  const frameLen = Math.max(1, Math.round(sr * 0.02));
+  const totalLen = buf.length;
+  const nFrames  = Math.ceil(totalLen / frameLen);
+
+  const channels = [];
+  for (let c = 0; c < nCh; c++) channels.push(buf.getChannelData(c));
+
+  const frameRMS = new Float32Array(nFrames);
+  let peakRMS = 0;
+  for (let f = 0; f < nFrames; f++) {
+    const s0 = f * frameLen, s1 = Math.min(totalLen, s0 + frameLen);
+    let sumSq = 0, count = 0;
+    for (let c = 0; c < nCh; c++) {
+      const d = channels[c];
+      for (let i = s0; i < s1; i++) { sumSq += d[i] * d[i]; count++; }
+    }
+    const rms = count ? Math.sqrt(sumSq / count) : 0;
+    frameRMS[f] = rms;
+    if (rms > peakRMS) peakRMS = rms;
+  }
+
+  if (peakRMS < 1e-6) return null; // digital silence throughout
+
+  const threshold = peakRMS * thresholdRatio;
+
+  let startFrame = 0;
+  while (startFrame < nFrames && frameRMS[startFrame] <= threshold) startFrame++;
+  if (startFrame >= nFrames) return null; // nothing above threshold anywhere
+
+  let endFrame = nFrames - 1;
+  while (endFrame > startFrame && frameRMS[endFrame] <= threshold) endFrame--;
+
+  let start = (startFrame * frameLen) / sr - padding;
+  let end   = ((endFrame + 1) * frameLen) / sr + padding;
+  start = Math.max(0, start);
+  end   = Math.min(buf.duration, end);
+
+  if (end - start < 0.1) return null; // degenerate result, leave untouched
+
+  return { start, end };
+}
+
+function autoTrimSilence() {
+  if (!audioBuffer) return;
+  const bounds = detectSilenceBounds(audioBuffer);
+  if (!bounds) {
+    setStatus('No clear silence to trim.', 'err');
+    setTimeout(() => setStatus(''), 2500);
+    return;
+  }
+  trimStart = bounds.start;
+  trimEnd   = bounds.end;
+  updateTrimDisplay();
+  renderWave(isPlaying ? nowPos() : undefined);
+  syncLoopBounds();
+  setStatus(`Silence trimmed to ${fmt(trimStart)} → ${fmt(trimEnd)} — review, then Apply Trim.`, 'ok');
+  setTimeout(() => setStatus(''), 3500);
+}
+
+// Pointer event helpers for trim/seek on waveform
+function waveX(e) {
+  const r = waveCanvas.getBoundingClientRect();
+  return e.clientX - r.left;
+}
+function waveW() { return waveCanvas.getBoundingClientRect().width; }
+
+waveCanvas.addEventListener('pointerdown', e => {
+  if (!audioBuffer) return;
+  e.preventDefault();
+  waveCanvas.setPointerCapture(e.pointerId);
+
+  const x    = waveX(e), W = waveW();
+  const sx   = (trimStart / audioBuffer.duration) * W;
+  const ex   = (trimEnd   / audioBuffer.duration) * W;
+  const GRAB = 16;
+
+  if (Math.abs(x - sx) < GRAB) { trimDrag = 'start'; return; }
+  if (Math.abs(x - ex) < GRAB) { trimDrag = 'end';   return; }
+  trimDrag = null;
+  seekToPos((x / W) * audioBuffer.duration);
+});
+
+waveCanvas.addEventListener('pointermove', e => {
+  if (!audioBuffer) return;
+  const x = waveX(e), W = waveW();
+
+  if (trimDrag) {
+    const t = Math.max(0, Math.min(audioBuffer.duration, (x / W) * audioBuffer.duration));
+    if (trimDrag === 'start') trimStart = Math.min(t, trimEnd - 0.15);
+    else                      trimEnd   = Math.max(t, trimStart + 0.15);
+    updateTrimDisplay(); renderWave(isPlaying ? nowPos() : undefined);
+    syncLoopBounds();
+    return;
+  }
+
+  // Cursor hint
+  const sx = (trimStart / audioBuffer.duration) * W;
+  const ex = (trimEnd   / audioBuffer.duration) * W;
+  waveCanvas.style.cursor =
+    (Math.abs(x-sx) < 16 || Math.abs(x-ex) < 16) ? 'ew-resize' : 'pointer';
+});
+
+waveCanvas.addEventListener('pointerup', e => {
+  trimDrag = null;
+  waveCanvas.releasePointerCapture(e.pointerId);
+  updateTrimDisplay();
+});
+
+// ── Recording ──────────────────────────────────────────────────────────────
+btnRecord.addEventListener('click', () => {
+  if (isRecording) return;
+  startRecording();
+});
+
+btnStopRec.addEventListener('click', stopRecording);
+btnPauseRec.addEventListener('click', () => { isPaused ? resumeRecording() : pauseRecording(); });
+btnMonitor.addEventListener('click', toggleMonitor);
+
+async function startRecording() {
+  try {
+    recordStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation:  false,  // browser EC creates artifacts + adds ~50-100ms latency
+        noiseSuppression:  false,  // we have our own noise gate
+        autoGainControl:   false,  // we have our own volume control
+        latency:           0,      // request minimum input buffering
+      },
+      video: false,
+    });
+  } catch(e) {
+    setStatus('Microphone access denied: ' + e.message, 'err');
+    return;
+  }
+
+  resetMemo();
+
+  // Use main audioCtx so we can route into the effects chain for monitoring
+  const ctx = getCtx();
+  micSourceNode = ctx.createMediaStreamSource(recordStream);
+
+  // Analyser taps the raw mic for the level meter (no effects, no output)
+  recAnalyser = ctx.createAnalyser();
+  recAnalyser.fftSize = 256;
+  micSourceNode.connect(recAnalyser);
+
+  // MediaRecorder always captures the raw stream so effects stay re-adjustable after
+  const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg']
+    .find(t => MediaRecorder.isTypeSupported(t)) || '';
+  recordChunks = [];
+  mediaRecorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : {});
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data); };
+  mediaRecorder.onstop = finishRecording;
+  mediaRecorder.start(100);
+
+  isRecording = true;
+  isPaused = false;
+  recStartTime = Date.now();
+  recPausedTotal = 0;
+  recPanel.classList.remove('paused');
+  recPanel.classList.add('show');
+  btnRecord.classList.add('recording');
+  btnPauseRec.textContent = '⏸ Pause';
+  recStatusLabel.textContent = 'REC';
+  monitorMode = 'off';
+  updateMonitorBtn();
+
+  tickLevel();
+  tickRecTimer();
+}
+
+function pauseRecording() {
+  if (!isRecording || isPaused) return;
+  if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.pause();
+  isPaused = true;
+  pauseStartedAt = Date.now();
+  cancelAnimationFrame(levelRafId);
+  cancelAnimationFrame(recTimerRafId);
+  levelBar.style.width = '0%';
+  recPanel.classList.add('paused');
+  recStatusLabel.textContent = 'PAUSED';
+  btnPauseRec.textContent = '▶ Resume';
+}
+
+function resumeRecording() {
+  if (!isRecording || !isPaused) return;
+  if (mediaRecorder && mediaRecorder.state === 'paused') mediaRecorder.resume();
+  recPausedTotal += Date.now() - pauseStartedAt;
+  isPaused = false;
+  recPanel.classList.remove('paused');
+  recStatusLabel.textContent = 'REC';
+  btnPauseRec.textContent = '⏸ Pause';
+  tickLevel();
+  tickRecTimer();
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  // Tear down monitor first
+  if (isMonitoring()) disableMonitor();
+  isRecording = false;
+  isPaused = false;
+  recPanel.classList.remove('paused');
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
+  if (micSourceNode) { try { micSourceNode.disconnect(); } catch(_) {} micSourceNode = null; }
+  recAnalyser = null;
+  cancelAnimationFrame(levelRafId);
+  cancelAnimationFrame(recTimerRafId);
+  recPanel.classList.remove('show');
+  btnRecord.classList.remove('recording');
+  levelBar.style.width = '0%';
+}
+
+// ── Real-time monitoring ───────────────────────────────────────────────────
+function updateMonitorBtn() {
+  const btn = $('btnMonitor');
+  btn.classList.remove('direct', 'effects');
+  if (monitorMode === 'off') {
+    btn.textContent = '🔇 Monitor';
+  } else {
+    const latMs = monitorCtx
+      ? Math.round(((monitorCtx.baseLatency || 0) + (monitorCtx.outputLatency || 0)) * 1000)
+      : 0;
+    const latStr = latMs > 0 ? ` (~${latMs}ms)` : '';
+    if (monitorMode === 'direct') {
+      btn.classList.add('direct');
+      btn.textContent = `🎙 Direct${latStr}`;
+    } else {
+      btn.classList.add('effects');
+      btn.textContent = `🎛 Effects${latStr}`;
+    }
+  }
+}
+
+async function toggleMonitor() {
+  if (!recordStream) return;
+  if (monitorMode === 'off')      { await enableMonitor('direct');  }
+  else if (monitorMode === 'direct') { await enableMonitor('effects'); }
+  else                              { disableMonitor(); }
+}
+
+async function enableMonitor(mode) {
+  // Tear down any existing monitor first
+  if (monitorMicSrc) { try { monitorMicSrc.disconnect(); } catch(_) {} monitorMicSrc = null; }
+  monitorChain = null;
+  if (monitorCtx) { monitorCtx.close(); monitorCtx = null; }
+
+  // Dedicated low-latency context — separate from playback context
+  monitorCtx = new AudioContext({ latencyHint: 'interactive' });
+  monitorMicSrc = monitorCtx.createMediaStreamSource(recordStream);
+
+  if (mode === 'direct') {
+    // Shortest possible path: mic → speakers, no processing, minimum latency
+    monitorMicSrc.connect(monitorCtx.destination);
+  } else {
+    // Full effects chain
+    const pr = getParams();
+    if (pr.nsOn) { try { await ensureGate(monitorCtx); } catch(_) {} }
+    monitorChain = buildChain(monitorCtx, pr);
+    monitorMicSrc.connect(monitorChain.input);
+  }
+
+  monitorMode = mode;
+  updateMonitorBtn();
+}
+
+function disableMonitor() {
+  if (monitorMicSrc) { try { monitorMicSrc.disconnect(); } catch(_) {} monitorMicSrc = null; }
+  monitorChain = null;
+  if (monitorCtx) { monitorCtx.close(); monitorCtx = null; }
+  monitorMode = 'off';
+  updateMonitorBtn();
+}
+
+// Rebuild effects graph inside the existing monitor context (effects mode only)
+async function rebuildMonitorChain() {
+  if (monitorMode !== 'effects' || !monitorCtx || !monitorMicSrc) return;
+  try { monitorMicSrc.disconnect(); } catch(_) {}
+  monitorChain = null;
+  const pr = getParams();
+  if (pr.nsOn) { try { await ensureGate(monitorCtx); } catch(_) {} }
+  monitorChain = buildChain(monitorCtx, pr);
+  monitorMicSrc.connect(monitorChain.input);
+}
+
+async function finishRecording() {
+  if (recordChunks.length === 0) { setStatus('Recording was empty.', 'err'); return; }
+  setStatus('Processing recording…', 'proc');
+
+  const mimeType = mediaRecorder.mimeType || 'audio/webm';
+  const blob = new Blob(recordChunks, { type: mimeType });
+
+  try {
+    const ctx = getCtx();
+    const ab  = await blob.arrayBuffer();
+    audioBuffer = await ctx.decodeAudioData(ab);
+    baseName = 'recording_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
+    loadedUI(`Recorded: ${fmt(audioBuffer.duration)}`);
+  } catch(e) {
+    setStatus('Could not decode recording: ' + e.message, 'err');
+  }
+}
+
+function tickLevel() {
+  if (!recAnalyser) return;
+  const data = new Uint8Array(recAnalyser.frequencyBinCount);
+  recAnalyser.getByteFrequencyData(data);
+  const avg = data.reduce((s,v) => s+v, 0) / data.length;
+  levelBar.style.width = Math.min(100, avg * 2.8) + '%';
+  levelRafId = requestAnimationFrame(tickLevel);
+}
+
+function tickRecTimer() {
+  if (!isRecording || isPaused) return;
+  recTimerEl.textContent = fmt((Date.now() - recStartTime - recPausedTotal) / 1000);
+  recTimerRafId = requestAnimationFrame(tickRecTimer);
+}
+
+// ── Saved memo library (IndexedDB) ─────────────────────────────────────────
+const LIB_DB_NAME = 'vms_library_v1';
+const LIB_STORE   = 'memos';
+let libDbPromise = null;
+
+function openLibDB() {
+  if (libDbPromise) return libDbPromise;
+  libDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(LIB_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(LIB_STORE)) {
+        db.createObjectStore(LIB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+  return libDbPromise;
+}
+
+async function libAdd(record) {
+  const db = await openLibDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(LIB_STORE, 'readwrite').objectStore(LIB_STORE).add(record);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function libGetAll() {
+  const db = await openLibDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(LIB_STORE, 'readonly').objectStore(LIB_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function libGet(id) {
+  const db = await openLibDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(LIB_STORE, 'readonly').objectStore(LIB_STORE).get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function libDelete(id) {
+  const db = await openLibDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(LIB_STORE, 'readwrite').objectStore(LIB_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function saveToLibrary() {
+  if (!audioBuffer) return;
+  try {
+    const blob = new Blob([encodeWAV(audioBuffer)], { type: 'audio/wav' });
+    await libAdd({ name: baseName || 'memo', blob, duration: audioBuffer.duration, createdAt: Date.now() });
+    setStatus('Saved to library.', 'ok'); setTimeout(() => setStatus(''), 2500);
+    if (libraryPanel.classList.contains('show')) renderLibraryList();
+  } catch(e) {
+    setStatus('Could not save to library: ' + e.message, 'err');
+  }
+}
+
+async function renderLibraryList() {
+  libraryList.innerHTML = '<div class="lib-empty">Loading…</div>';
+  let memos;
+  try { memos = await libGetAll(); } catch(e) { memos = []; }
+  if (!memos.length) {
+    libraryList.innerHTML = '<div class="lib-empty">No saved memos yet — load or record one, then "Save to Library".</div>';
+    return;
+  }
+  memos.sort((a, b) => b.createdAt - a.createdAt);
+  libraryList.innerHTML = memos.map(m => {
+    const date = new Date(m.createdAt).toLocaleString();
+    return `
+      <div class="lib-row" data-id="${m.id}">
+        <div class="lib-info">
+          <div class="lib-name">${m.name}</div>
+          <div class="lib-meta">${fmt(m.duration)} &nbsp;·&nbsp; ${date}</div>
+        </div>
+        <button class="btn-trim-reset lib-load">▶ Load</button>
+        <button class="btn-trim-reset lib-delete">🗑</button>
+      </div>`;
+  }).join('');
+}
+
+async function loadFromLibrary(id) {
+  const rec = await libGet(id);
+  if (!rec) return;
+  if (isRecording) stopRecording();
+  resetMemo();
+  const ok = await decodeAndLoad(rec.blob, rec.name, rec.blob.size);
+  if (ok) closeLibrary();
+}
+
+async function deleteFromLibrary(id, name) {
+  if (!confirm(`Delete "${name}" from the library? This can't be undone.`)) return;
+  await libDelete(id);
+  renderLibraryList();
+}
+
+function openLibrary() {
+  libraryPanel.classList.add('show');
+  renderLibraryList();
+}
+function closeLibrary() {
+  libraryPanel.classList.remove('show');
+}
+
+// ── File loading ───────────────────────────────────────────────────────────
+// Shared by drag/drop file loading and loading a memo back out of the library.
+async function decodeAndLoad(blob, displayName, sizeBytes) {
+  setStatus('Decoding audio…', 'proc');
+  try {
+    const ctx = getCtx();
+    const ab  = await blob.arrayBuffer();
+    audioBuffer = await ctx.decodeAudioData(ab);
+    baseName = displayName.replace(/\.[^.]+$/, '');
+
+    const sizeStr = sizeBytes != null ? ` &nbsp;·&nbsp; ${(sizeBytes/1048576).toFixed(1)} MB` : '';
+    dropContent.innerHTML = `
+      <div class="file-loaded">✓ ${displayName}</div>
+      <div class="file-meta">${fmt(audioBuffer.duration)}${sizeStr} &nbsp;·&nbsp; Click to change file</div>`;
+    dropZone.classList.add('loaded');
+    loadedUI(`Loaded: ${displayName}`);
+    return true;
+  } catch(e) {
+    setStatus('Could not decode audio: ' + e.message, 'err'); console.error(e);
+    return false;
+  }
+}
+
+async function loadFile(file) {
+  if (isRecording) stopRecording();
+  resetMemo();
+  await decodeAndLoad(file, file.name, file.size);
+}
+
+function loadedUI(statusMsg) {
+  trimStart = 0; trimEnd = audioBuffer.duration;
+  playOffset = 0; stop();
+
+  waveWrap.classList.add('show');
+  playback.classList.add('show');
+  fxSection.classList.add('show');
+  exportOptions.classList.add('show');
+  exportRow.classList.add('show');
+  setExportBtns(false);
+  totTimeEl.textContent = fmt(audioBuffer.duration);
+  updateTrimDisplay();
+  waveCache = null;
+  // defer initWave so canvas has layout
+  requestAnimationFrame(() => initWave());
+
+  setStatus(statusMsg || 'Ready.', 'ok');
+  setTimeout(() => setStatus(''), 3000);
+}
+
+// ── Export options ─────────────────────────────────────────────────────────
+function getExportOptions() {
+  const rateSel = $('selExportRate').value;
+  return {
+    bitrate:    parseInt($('selMp3Bitrate').value, 10),
+    sampleRate: rateSel === 'orig' ? null : parseInt(rateSel, 10),
+    mono:       $('chkExportMono').checked,
+  };
+}
+
+// ── Offline render ─────────────────────────────────────────────────────────
+// Renders the current trim selection (via getExportBuffer) through the effects
+// chain, without requiring "Apply Trim" to have been clicked first.
+async function renderOffline(pr, opts = {}) {
+  const srcBuffer = getExportBuffer();
+  const nCh  = opts.mono ? 1 : Math.min(srcBuffer.numberOfChannels, 2);
+  const sr   = opts.sampleRate || srcBuffer.sampleRate; // OfflineAudioContext auto-resamples the source
+  const dur  = srcBuffer.duration;
+  const tail = (pr.revOn ? pr.revDecay + 1.5 : 0) + (pr.echoOn ? 2.5 : 0);
+  const len  = Math.ceil((dur + tail) * sr);
+
+  const off = new OfflineAudioContext(nCh, len, sr);
+  if (pr.nsOn) { try { await ensureGate(off); } catch(e) {} }
+  const nd  = buildChain(off, pr);
+
+  scheduleGainEnvelope(nd.master.gain, 0, pr, dur, 0);
+
+  const src = off.createBufferSource();
+  src.buffer = srcBuffer; src.connect(nd.input); src.start(0);
+  return off.startRendering();
+}
+
+// ── WAV encoder ────────────────────────────────────────────────────────────
+function encodeWAV(buf) {
+  const nCh = buf.numberOfChannels, sr = buf.sampleRate, len = buf.length, bps = 2;
+  const ab  = new ArrayBuffer(44 + len*nCh*bps);
+  const v   = new DataView(ab);
+  const ws  = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  ws(0,'RIFF'); v.setUint32(4, 36+len*nCh*bps, true);
+  ws(8,'WAVE'); ws(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true);
+  v.setUint16(22,nCh,true); v.setUint32(24,sr,true);
+  v.setUint32(28,sr*nCh*bps,true); v.setUint16(32,nCh*bps,true);
+  v.setUint16(34,16,true); ws(36,'data'); v.setUint32(40,len*nCh*bps,true);
+  let off = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < nCh; c++) {
+    const s = Math.max(-1, Math.min(1, buf.getChannelData(c)[i]));
+    v.setInt16(off, s < 0 ? s*0x8000 : s*0x7FFF, true); off += 2;
+  }
+  return ab;
+}
+
+function dl(blob, name) {
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), {href:url, download:name}).click();
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+
+async function exportWAV() {
+  if (!audioBuffer) return;
+  setStatus('Rendering audio…', 'proc'); setExportBtns(true);
+  try {
+    const rendered = await renderOffline(getParams(), getExportOptions());
+    dl(new Blob([encodeWAV(rendered)], {type:'audio/wav'}), `${baseName}_studio.wav`);
+    setStatus('WAV saved!', 'ok');
+  } catch(e) { setStatus('Export error: ' + e.message, 'err'); }
+  finally { setExportBtns(false); setTimeout(() => setStatus(''), 4000); }
+}
+
+async function exportMP3() {
+  if (!audioBuffer) return;
+  if (typeof lamejs === 'undefined') {
+    setStatus('MP3 library not loaded — use WAV export or check internet connection.', 'err'); return;
+  }
+  const opts = getExportOptions();
+  setStatus('Rendering audio…', 'proc'); setExportBtns(true);
+  try {
+    const rendered = await renderOffline(getParams(), opts);
+    setStatus('Encoding MP3…', 'proc');
+    const nCh = Math.min(rendered.numberOfChannels, 2), sr = rendered.sampleRate;
+    const enc = new lamejs.Mp3Encoder(nCh, sr, opts.bitrate), blk = 1152;
+    const toI16 = f => { const i = new Int16Array(f.length);
+      for (let x=0;x<f.length;x++) { const s=Math.max(-1,Math.min(1,f[x])); i[x]=s<0?s*0x8000:s*0x7FFF; }
+      return i; };
+    const L = toI16(rendered.getChannelData(0));
+    const R = nCh > 1 ? toI16(rendered.getChannelData(1)) : L;
+    const chunks = [];
+    for (let i=0; i<L.length; i+=blk) {
+      const c = enc.encodeBuffer(L.subarray(i,i+blk), R.subarray(i,i+blk));
+      if (c.length) chunks.push(new Uint8Array(c));
+    }
+    const fin = enc.flush(); if (fin.length) chunks.push(new Uint8Array(fin));
+    dl(new Blob(chunks, {type:'audio/mp3'}), `${baseName}_studio.mp3`);
+    setStatus('MP3 saved!', 'ok');
+  } catch(e) { setStatus('Export error: ' + e.message, 'err'); }
+  finally { setExportBtns(false); setTimeout(() => setStatus(''), 4000); }
+}
+
+// ── Export M4A ─────────────────────────────────────────────────────────────
+async function exportM4A() {
+  if (!audioBuffer) return;
+
+  // Prefer AAC-in-MP4; fall back to plain mp4
+  const mimeType = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/x-m4a']
+    .find(t => MediaRecorder.isTypeSupported(t));
+
+  if (!mimeType) {
+    setStatus('M4A / AAC is not supported in this browser — try WAV or MP3.', 'err');
+    setTimeout(() => setStatus(''), 5000);
+    return;
+  }
+
+  setStatus('Rendering effects…', 'proc');
+  setExportBtns(true);
+  try {
+    const rendered = await renderOffline(getParams(), getExportOptions());
+    const dur = rendered.duration;
+
+    // M4A encoding is real-time: we play the rendered buffer through a live AudioContext
+    // while MediaRecorder captures the output stream.
+    setStatus(`Encoding M4A… 0:00 / ${fmt(dur)}`, 'proc');
+
+    const tmpCtx = new AudioContext({ sampleRate: rendered.sampleRate });
+    const dest   = tmpCtx.createMediaStreamDestination();
+    const src    = tmpCtx.createBufferSource();
+    src.buffer   = rendered;
+    src.connect(dest);
+
+    const recorder = new MediaRecorder(dest.stream, { mimeType });
+    const chunks   = [];
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    // Live progress counter while encoding
+    let progRaf;
+    const tick = () => {
+      if (tmpCtx.state === 'closed') return;
+      setStatus(`Encoding M4A… ${fmt(tmpCtx.currentTime)} / ${fmt(dur)}`, 'proc');
+      progRaf = requestAnimationFrame(tick);
+    };
+
+    await new Promise((resolve, reject) => {
+      recorder.onstop  = resolve;
+      recorder.onerror = e => reject(e.error || new Error('MediaRecorder error'));
+      recorder.start(200);
+      src.start(0);
+      src.onended = () => { cancelAnimationFrame(progRaf); recorder.stop(); };
+      tick();
+    });
+
+    await tmpCtx.close();
+    dl(new Blob(chunks, { type: 'audio/mp4' }), `${baseName}_studio.m4a`);
+    setStatus('M4A saved!', 'ok');
+  } catch(e) {
+    setStatus('M4A export error: ' + e.message, 'err');
+  } finally {
+    setExportBtns(false);
+    setTimeout(() => setStatus(''), 5000);
+  }
+}
+
+// ── Slider label wiring ────────────────────────────────────────────────────
+const sliderDefs = [
+  ['sVol',      'vVol',      v => `${v}%`],
+  ['sFadeInDur','vFadeInDur',v => `${(v/10).toFixed(1)}s`],
+  ['sFadeDur',  'vFadeDur',  v => `${(v/10).toFixed(1)}s`],
+  ['sRevWet',   'vRevWet',   v => `${v}%`],
+  ['sRevDec',   'vRevDec',   v => `${(v/10).toFixed(1)}s`],
+  ['sEchoDly',  'vEchoDly',  v => `${v}ms`],
+  ['sEchoFb',   'vEchoFb',   v => `${v}%`],
+  ['sEchoWet',  'vEchoWet',  v => `${v}%`],
+  ['sBassGain', 'vBassGain', v => `${v>0?'+':''}${v} dB`],
+  ['sBassFreq', 'vBassFreq', v => `${v} Hz`],
+  ['sTrebGain', 'vTrebGain', v => `${v>0?'+':''}${v} dB`],
+  ['sTrebFreq', 'vTrebFreq', v => v>=1000 ? `${(v/1000).toFixed(1)} kHz` : `${v} Hz`],
+  ['sWarm',     'vWarm',     v => v],
+  ['sNRSize',   'vNRSize',   v => `${Math.round(2 + (v/100)*23)}m`],
+  ['sNRWet',    'vNRWet',    v => `${v}%`],
+  ['sNSStr',    'vNSStr',    v => `${v}%`],
+];
+
+function refreshSliderLabels() {
+  sliderDefs.forEach(([sid, vid, fmtFn]) => { $(vid).textContent = fmtFn($(sid).value); });
+}
+
+// These params require restarting playback (can't patch live)
+const fadeRestartIds = new Set(['sFadeInDur', 'sFadeDur', 'tFadeIn', 'tFade', 'sNRSize']);
+
+sliderDefs.forEach(([sid, vid, fmtFn]) => {
+  const sl = $(sid), vl = $(vid);
+  sl.addEventListener('input', () => {
+    vl.textContent = fmtFn(sl.value);
+    if (isPlaying && nodes) {
+      if (fadeRestartIds.has(sid)) play(nowPos());
+      else patchNodes(nodes, getPlaybackParams());
+    }
+    // Mirror changes into the live monitor chain (bypass doesn't apply to monitoring)
+    if (isMonitoring() && monitorChain) {
+      if (fadeRestartIds.has(sid)) rebuildMonitorChain();
+      else patchNodes(monitorChain, getParams());
+    }
+  });
+});
+
+['tRev','tEcho','tBass','tTreb','tWarm'].forEach(id => {
+  $(id).addEventListener('change', () => {
+    if (isPlaying && nodes) patchNodes(nodes, getPlaybackParams());
+    if (isMonitoring() && monitorChain) patchNodes(monitorChain, getParams());
+  });
+});
+$('tFadeIn').addEventListener('change', () => { if (isPlaying) play(nowPos()); });
+$('tFade').addEventListener('change', () => { if (isPlaying) play(nowPos()); });
+$('tNR').addEventListener('change', () => {
+  if (isPlaying && nodes) patchNodes(nodes, getPlaybackParams());
+  if (isMonitoring() && monitorChain) patchNodes(monitorChain, getParams());
+});
+// NS toggle needs a graph rebuild (gate node added/removed)
+$('tNS').addEventListener('change', () => {
+  if (isPlaying) play(nowPos());
+  if (isMonitoring()) rebuildMonitorChain();
+});
+
+// ── A/B Bypass toggle ──────────────────────────────────────────────────────
+btnBypass.addEventListener('click', () => {
+  bypassOn = !bypassOn;
+  btnBypass.classList.toggle('bypass-on', bypassOn);
+  btnBypass.textContent = bypassOn ? '🎧 Bypassed (Dry)' : '🎧 Bypass';
+  // Full restart, not a patch: bypass also changes whether the noise-gate
+  // worklet node exists and how fades are scheduled, both of which require
+  // rebuilding the chain rather than patching it live.
+  if (isPlaying) play(nowPos());
+});
+
+// ── Playback events ────────────────────────────────────────────────────────
+playBtn.addEventListener('click', () => isPlaying ? pausePlay() : play());
+stopBtn.addEventListener('click', stop);
+btnRew.addEventListener('click', () => skipBy(-10));
+btnFwd.addEventListener('click', () => skipBy(10));
+
+seekBar.addEventListener('pointerdown', () => { seekDragging = true; });
+seekBar.addEventListener('input', () => {
+  if (!audioBuffer) return;
+  const pos = (seekBar.value / 1000) * audioBuffer.duration;
+  curTimeEl.textContent = fmt(pos);
+  renderWave(pos);  // move waveform cursor to preview target position
+});
+seekBar.addEventListener('change', () => {
+  seekDragging = false;
+  if (!audioBuffer) return;
+  const pos = (seekBar.value / 1000) * audioBuffer.duration;
+  playOffset = pos;
+  if (isPlaying) play(pos); else renderWave();
+});
+
+// ── File drop / select ─────────────────────────────────────────────────────
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+// ── Trim buttons ───────────────────────────────────────────────────────────
+btnApplyTrim.addEventListener('click', applyTrim);
+btnUndoTrim.addEventListener('click', undoTrim);
+btnAutoTrim.addEventListener('click', autoTrimSilence);
+$('btnResetTrim').addEventListener('click', resetTrim);
+
+btnLoop.addEventListener('click', () => {
+  if (!audioBuffer) return;
+  if (!loopOn) {
+    if (trimEnd - trimStart <= 0.05) {
+      setStatus('Select a range to loop first.', 'err');
+      setTimeout(() => setStatus(''), 2000);
+      return;
+    }
+    loopOn = true;
+    btnLoop.classList.add('loop-on');
+    if (isPlaying) {
+      play(trimStart);
+    } else {
+      playOffset = trimStart;
+      seekBar.value = (trimStart / audioBuffer.duration) * 1000;
+      curTimeEl.textContent = fmt(trimStart);
+      renderWave();
+    }
+  } else {
+    const wasPlaying = isPlaying;
+    const pos = nowPos(); // read the wrapped position before flipping loopOn off
+    loopOn = false;
+    btnLoop.classList.remove('loop-on');
+    if (wasPlaying) play(pos);
+  }
+});
+
+// ── Export ─────────────────────────────────────────────────────────────────
+btnWav.addEventListener('click', exportWAV);
+btnMp3.addEventListener('click', exportMP3);
+btnM4a.addEventListener('click', exportM4A);
+btnSaveLibrary.addEventListener('click', saveToLibrary);
+
+// ── Saved memo library ─────────────────────────────────────────────────────
+btnLibrary.addEventListener('click', () => {
+  libraryPanel.classList.contains('show') ? closeLibrary() : openLibrary();
+});
+btnCloseLibrary.addEventListener('click', closeLibrary);
+libraryList.addEventListener('click', e => {
+  const row = e.target.closest('.lib-row');
+  if (!row) return;
+  const id = parseInt(row.dataset.id, 10);
+  if (e.target.classList.contains('lib-load')) loadFromLibrary(id);
+  else if (e.target.classList.contains('lib-delete')) {
+    const name = row.querySelector('.lib-name').textContent;
+    deleteFromLibrary(id, name);
+  }
+});
+
+// ── Resize ─────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => { if (audioBuffer) { waveCache = null; initWave(); } });
+
+// ── Keyboard shortcuts ─────────────────────────────────────────────────────
+// Space = play/pause, ←/→ = skip 5s, Home = seek to start. Ignored while
+// typing in a form field, or with a modifier held (so browser/OS shortcuts
+// and native slider arrow-key behavior keep working).
+document.addEventListener('keydown', e => {
+  if (!audioBuffer) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (/^(input|select|textarea)$/i.test(e.target.tagName)) return;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      isPlaying ? pausePlay() : play();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      skipBy(-5);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      skipBy(5);
+      break;
+    case 'Home':
+      e.preventDefault();
+      seekToPos(0);
+      break;
+  }
+});
+
+// ── Persist effect settings ────────────────────────────────────────────────
+// Single delegated listener on the effects panel covers all sliders + toggles
+$('fxSection').addEventListener('input',  savePrefs);
+$('fxSection').addEventListener('change', savePrefs);
+
+// ── Named effect presets ───────────────────────────────────────────────────
+selPreset.addEventListener('change', () => {
+  const name = selPreset.value;
+  btnDeletePreset.disabled = !name;
+  if (!name) return;
+  applySettings(loadPresetStore()[name]);
+  refreshSliderLabels();
+  savePrefs(); // also becomes the new "last used", so it persists across reloads
+  if (isPlaying) play(nowPos());
+  if (isMonitoring()) rebuildMonitorChain();
+});
+
+btnSavePreset.addEventListener('click', () => {
+  const name = (prompt('Save current effect settings as:', selPreset.value || '') || '').trim();
+  if (!name) return;
+  const store = loadPresetStore();
+  store[name] = collectSettings();
+  savePresetStore(store);
+  refreshPresetSelect(name);
+});
+
+btnDeletePreset.addEventListener('click', () => {
+  const name = selPreset.value;
+  if (!name) return;
+  const store = loadPresetStore();
+  delete store[name];
+  savePresetStore(store);
+  refreshPresetSelect('');
+});
+
+// Restore saved settings, then sync display labels
+loadPrefs();
+refreshSliderLabels();
+refreshPresetSelect('');
+</script>
+</body>
+</html>
