@@ -13,11 +13,12 @@ Or grab [index.html](index.html) and open it locally — it's a single file with
 ### Record or load
 - **Record New Memo** — captures microphone audio via `getUserMedia` / `MediaRecorder`, with echo cancellation, noise suppression, and auto-gain all disabled at the browser level (the app has its own noise gate and volume control instead).
 - **Live level meter** and **elapsed-time counter** while recording.
-- **Input monitoring** while recording, cycled with one button: `Off → 🎙 Direct → 🎛 Effects → Off`. Direct mode is mic → speakers with no processing for minimum latency; Effects mode routes the mic through the same effects chain used for playback, so you can hear (roughly) how the final result will sound while you talk. Monitoring runs on its own dedicated low-latency `AudioContext` (`latencyHint: 'interactive'`), separate from the playback context.
+- **Input monitoring** while recording, cycled with one button: `Off → 🎙 Direct → 🎛 Effects → Off`. Direct mode is mic → speakers with no processing for minimum latency; Effects mode routes the mic through the same effects chain used for playback, so you can hear (roughly) how the final result will sound while you talk. **Use headphones/a headset** — monitoring plays your live mic input back out immediately, so listening over open speakers will feed that output straight back into the mic and cause feedback/echo. Monitoring runs on its own dedicated low-latency `AudioContext` (`latencyHint: 'interactive'`), separate from the playback context.
 - **Drag-and-drop or click-to-browse** file loading, accepting M4A, MP3, WAV, AAC, OGG, and anything else the browser's `decodeAudioData` supports.
 - **Starting fresh**: successfully starting a new recording (mic permission granted) or loading a new file clears any previously loaded/recorded memo first — waveform, trim, playback position, and export buttons all reset to their empty state. Loading a file also stops an in-progress recording. Canceling the file picker or denying mic access leaves the current memo untouched.
 
 - **Pause/Resume** recording mid-capture (native `mediaRecorder.pause()/.resume()`) — the elapsed timer freezes and excludes paused time, the rec-dot stops blinking, and the label switches to "PAUSED". The mic and live level meter stay active while paused; only the capture itself is suspended.
+- **↺ Reset** recording — discards whatever's been captured so far and restarts the capture from `0:00` on the same mic stream, without re-prompting for microphone permission. Works whether you're actively recording or paused.
 
 ### Waveform & trim
 - Canvas-rendered waveform (min/max peaks per pixel column, devicePixelRatio-aware).

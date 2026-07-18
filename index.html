@@ -227,6 +227,7 @@
     <div class="level-wrap"><div class="level-bar" id="levelBar"></div></div>
     <button class="btn-monitor" id="btnMonitor" title="Click to cycle: Off → 🎙 Direct (min latency) → 🎛 Effects → Off. Use headphones!">🔇 Monitor</button>
     <button class="btn-monitor" id="btnPauseRec">⏸ Pause</button>
+    <button class="btn-monitor" id="btnResetRec" title="Discard this recording and start over from 0:00">↺ Reset</button>
     <button class="btn-stoprec" id="btnStopRec">■ Stop</button>
   </div>
 
@@ -637,6 +638,7 @@ const recPanel    = $('recPanel');
 const btnRecord   = $('btnRecord');
 const btnStopRec  = $('btnStopRec');
 const btnPauseRec = $('btnPauseRec');
+const btnResetRec = $('btnResetRec');
 const btnMonitor  = $('btnMonitor');
 const levelBar    = $('levelBar');
 const recTimerEl  = $('recTimer');
@@ -1288,7 +1290,17 @@ btnRecord.addEventListener('click', () => {
 
 btnStopRec.addEventListener('click', stopRecording);
 btnPauseRec.addEventListener('click', () => { isPaused ? resumeRecording() : pauseRecording(); });
+btnResetRec.addEventListener('click', resetRecording);
 btnMonitor.addEventListener('click', toggleMonitor);
+
+function createMediaRecorder(stream) {
+  const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg']
+    .find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const rec = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+  rec.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data); };
+  rec.onstop = finishRecording;
+  return rec;
+}
 
 async function startRecording() {
   try {
@@ -1318,12 +1330,8 @@ async function startRecording() {
   micSourceNode.connect(recAnalyser);
 
   // MediaRecorder always captures the raw stream so effects stay re-adjustable after
-  const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg']
-    .find(t => MediaRecorder.isTypeSupported(t)) || '';
   recordChunks = [];
-  mediaRecorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : {});
-  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data); };
-  mediaRecorder.onstop = finishRecording;
+  mediaRecorder = createMediaRecorder(recordStream);
   mediaRecorder.start(100);
 
   isRecording = true;
@@ -1365,6 +1373,37 @@ function resumeRecording() {
   btnPauseRec.textContent = '⏸ Pause';
   tickLevel();
   tickRecTimer();
+}
+
+// Discards whatever's been captured so far and starts recording over from 0:00,
+// reusing the existing mic stream (no need to re-prompt for permission).
+function resetRecording() {
+  if (!isRecording) return;
+  if (mediaRecorder) {
+    mediaRecorder.ondataavailable = null;
+    mediaRecorder.onstop = null; // silently discard — don't finalize into a memo
+    if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  }
+  recordChunks = [];
+  mediaRecorder = createMediaRecorder(recordStream);
+  mediaRecorder.start(100);
+
+  isPaused = false;
+  recStartTime = Date.now();
+  recPausedTotal = 0;
+  recPanel.classList.remove('paused');
+  recStatusLabel.textContent = 'REC';
+  btnPauseRec.textContent = '⏸ Pause';
+  levelBar.style.width = '0%';
+
+  // Restart the meter/timer loops cleanly, whether or not they were already running
+  cancelAnimationFrame(levelRafId);
+  cancelAnimationFrame(recTimerRafId);
+  tickLevel();
+  tickRecTimer();
+
+  setStatus('Recording reset — starting fresh.', 'ok');
+  setTimeout(() => setStatus(''), 2000);
 }
 
 function stopRecording() {
