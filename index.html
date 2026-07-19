@@ -267,6 +267,7 @@
       <div class="time"><span id="curTime">0:00</span> / <span id="totTime">0:00</span></div>
     </div>
     <button class="btn-monitor" id="btnBypass" title="A/B compare: toggle between dry (unprocessed) and fully effected audio.">🎧 Bypass</button>
+    <button class="btn-monitor" id="btnDiag" title="Show audio diagnostics — tap Play first, then tap this while it's playing">🩺 Diag</button>
   </div>
 
   <!-- Effects -->
@@ -434,6 +435,11 @@
   </div>
 
   <div class="status" id="status"></div>
+
+  <pre id="diagOutput" style="display:none; white-space:pre-wrap; word-break:break-word;
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; margin:0 0 14px; font-size:.72rem; line-height:1.5;
+    color:var(--text); max-height:50vh; overflow:auto; -webkit-user-select:text; user-select:text;"></pre>
 
   <div class="export-options" id="exportOptions">
     <label>MP3 quality
@@ -624,6 +630,8 @@ const stopBtn     = $('stopBtn');
 const btnRew      = $('btnRew');
 const btnFwd      = $('btnFwd');
 const btnBypass   = $('btnBypass');
+const btnDiag     = $('btnDiag');
+const diagOutput  = $('diagOutput');
 const seekBar     = $('seekBar');
 const curTimeEl   = $('curTime');
 const totTimeEl   = $('totTime');
@@ -2039,6 +2047,82 @@ btnBypass.addEventListener('click', () => {
   // worklet node exists and how fades are scheduled, both of which require
   // rebuilding the chain rather than patching it live.
   if (isPlaying) play(nowPos());
+});
+
+// ── Audio diagnostics (for debugging silent playback on devices we can't attach
+// devtools to, e.g. iPhone without a Mac). Tap Play first, then this while it's
+// still playing — it forks an AnalyserNode off the live signal to check whether
+// real, non-flat audio is actually flowing through the effects chain, which tells
+// us whether a report of "no sound" is a graph/code bug (flat signal) or a
+// hardware/OS output problem (real signal, still silent). ──────────────────────
+btnDiag.addEventListener('click', async () => {
+  diagOutput.style.display = 'block';
+  diagOutput.textContent = 'Running diagnostics…';
+
+  let ctx, stateBefore;
+  try {
+    await withTimeout(unlockAudioSession(), 1000);
+    ctx = getCtx();
+    stateBefore = ctx.state;
+  } catch (e) {
+    diagOutput.textContent = 'Failed before diagnostics could run:\n' + (e && e.stack || e);
+    return;
+  }
+
+  const resumeResult = await withTimeout(
+    ctx.resume().then(() => ({ ok: true, error: null })).catch(e => ({ ok: false, error: e && e.message })),
+    3000
+  );
+
+  // Is the context clock actually advancing (a genuinely running context), not just
+  // reporting state === 'running' while doing nothing?
+  const t1 = ctx.currentTime;
+  await new Promise(r => setTimeout(r, 200));
+  const ctxCurrentTimeAdvancing = (ctx.currentTime - t1) > 0.1;
+
+  // Tap the live signal at the master gain node, if something is currently playing.
+  let liveSignal = null;
+  if (isPlaying && nodes && nodes.master) {
+    try {
+      const an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      nodes.master.connect(an); // fork — doesn't disturb the existing routing to destination
+      await new Promise(r => setTimeout(r, 300));
+      const data = new Float32Array(an.fftSize);
+      an.getFloatTimeDomainData(data);
+      let min = 1, max = -1, sumSq = 0;
+      for (const v of data) { if (v < min) min = v; if (v > max) max = v; sumSq += v * v; }
+      liveSignal = { min, max, spread: max - min, rms: Math.sqrt(sumSq / data.length) };
+      an.disconnect();
+    } catch (e) {
+      liveSignal = { error: e && e.message };
+    }
+  }
+
+  const info = {
+    userAgent: navigator.userAgent,
+    isSecureContext: window.isSecureContext,
+    ctxStateBefore: stateBefore,
+    ctxStateAfterResume: ctx.state,
+    ctxCurrentTimeAdvancing,
+    resumeOk: resumeResult.ok,
+    resumeError: resumeResult.error,
+    sampleRate: ctx.sampleRate,
+    destChannelCount: ctx.destination.channelCount,
+    destMaxChannelCount: ctx.destination.maxChannelCount,
+    audioBufferLoaded: !!audioBuffer,
+    audioBufferDuration: audioBuffer ? audioBuffer.duration : null,
+    audioBufferChannels: audioBuffer ? audioBuffer.numberOfChannels : null,
+    isPlaying,
+    bypassOn,
+    masterGainValue: nodes && nodes.master ? nodes.master.gain.value : null,
+    inputGainValue: nodes && nodes.input ? nodes.input.gain.value : null,
+    liveSignalAtMaster: liveSignal,
+    liveSignalNote: isPlaying
+      ? 'spread/rms near 0 = signal is dead in our graph (code bug); a real non-zero reading = signal is fine, problem is downstream (hardware/OS output)'
+      : 'not playing when tapped — tap Play FIRST, then tap Diag while it plays, for this check to mean anything',
+  };
+  diagOutput.textContent = JSON.stringify(info, null, 2);
 });
 
 // ── Playback events ────────────────────────────────────────────────────────
