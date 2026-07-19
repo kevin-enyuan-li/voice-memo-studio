@@ -267,7 +267,6 @@
       <div class="time"><span id="curTime">0:00</span> / <span id="totTime">0:00</span></div>
     </div>
     <button class="btn-monitor" id="btnBypass" title="A/B compare: toggle between dry (unprocessed) and fully effected audio.">🎧 Bypass</button>
-    <button class="btn-monitor" id="btnDiag" title="Show audio diagnostics — useful if playback has no sound">🩺 Diag</button>
   </div>
 
   <!-- Effects -->
@@ -435,11 +434,6 @@
   </div>
 
   <div class="status" id="status"></div>
-
-  <pre id="diagOutput" style="display:none; white-space:pre-wrap; word-break:break-word;
-    background:var(--card); border:1px solid var(--border); border-radius:10px;
-    padding:12px 14px; margin:0 0 14px; font-size:.72rem; line-height:1.5;
-    color:var(--text); max-height:50vh; overflow:auto; -webkit-user-select:text; user-select:text;"></pre>
 
   <div class="export-options" id="exportOptions">
     <label>MP3 quality
@@ -630,12 +624,10 @@ const stopBtn     = $('stopBtn');
 const btnRew      = $('btnRew');
 const btnFwd      = $('btnFwd');
 const btnBypass   = $('btnBypass');
-const btnDiag     = $('btnDiag');
 const seekBar     = $('seekBar');
 const curTimeEl   = $('curTime');
 const totTimeEl   = $('totTime');
 const statusEl    = $('status');
-const diagOutput  = $('diagOutput');
 const btnWav      = $('btnWav');
 const btnMp3      = $('btnMp3');
 const btnM4a      = $('btnM4a');
@@ -2031,60 +2023,6 @@ btnBypass.addEventListener('click', () => {
   // worklet node exists and how fades are scheduled, both of which require
   // rebuilding the chain rather than patching it live.
   if (isPlaying) play(nowPos());
-});
-
-// ── Audio diagnostics (for debugging silent playback on devices we can't attach
-// devtools to, e.g. iPhone without a Mac) ───────────────────────────────────
-// Races a promise against a timeout so a stuck/never-settling await (which we've
-// seen hints of on iOS) can't block the rest of the diagnostics from rendering.
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise.then(() => ({ ok: true, error: null })).catch(e => ({ ok: false, error: (e && e.message) || String(e) })),
-    new Promise(resolve => setTimeout(() => resolve({ ok: false, error: `timed out after ${ms}ms (never resolved or rejected)` }), ms)),
-  ]);
-}
-
-btnDiag.addEventListener('click', async () => {
-  // Render on the page rather than alert() — if alert() itself is being blocked for
-  // some reason, this still shows up, and unlike a popup it can't silently vanish.
-  diagOutput.style.display = 'block';
-  diagOutput.textContent = 'Running diagnostics…';
-
-  let ctx, stateBefore;
-  try {
-    unlockAudioSession();
-    ctx = getCtx();
-    stateBefore = ctx.state;
-  } catch (e) {
-    diagOutput.textContent = 'Failed before diagnostics could run:\n' + (e && e.stack || e);
-    return;
-  }
-
-  const resumeResult = await withTimeout(ctx.resume(), 3000);
-
-  const el = new Audio(SILENT_WAV_DATA_URI);
-  const unlockResult = await withTimeout(el.play().then(() => el.pause()), 3000);
-
-  const info = {
-    userAgent: navigator.userAgent,
-    isSecureContext: window.isSecureContext,
-    ctxStateBefore: stateBefore,
-    ctxStateAfterResume: ctx.state,
-    resumeOk: resumeResult.ok,
-    resumeError: resumeResult.error,
-    sampleRate: ctx.sampleRate,
-    baseLatency: ctx.baseLatency,
-    destChannelCount: ctx.destination.channelCount,
-    destMaxChannelCount: ctx.destination.maxChannelCount,
-    unlockAudioOk: unlockResult.ok,
-    unlockAudioError: unlockResult.error,
-    audioBufferLoaded: !!audioBuffer,
-    audioBufferDuration: audioBuffer ? audioBuffer.duration : null,
-    audioBufferChannels: audioBuffer ? audioBuffer.numberOfChannels : null,
-    isPlaying,
-    bypassOn,
-  };
-  diagOutput.textContent = JSON.stringify(info, null, 2);
 });
 
 // ── Playback events ────────────────────────────────────────────────────────
