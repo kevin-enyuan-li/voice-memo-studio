@@ -714,11 +714,21 @@ const SILENT_WAV_DATA_URI = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABA
 // since it's a tiny local data URI — means the tap that actually needs it always gets
 // its own fresh, unspent claim instead of relying on an earlier one that may have
 // already been clobbered.
+// Returns a promise so callers can await it — the audio-session category change this
+// triggers may need a moment to actually take effect on iOS, so starting real playback
+// before it resolves can still run under the stale session. Callers should race this
+// against a short timeout rather than await it unconditionally, in case it hangs.
 function unlockAudioSession() {
-  try {
-    const el = new Audio(SILENT_WAV_DATA_URI);
-    el.play().then(() => el.pause()).catch(() => {});
-  } catch(_) {}
+  return new Promise(resolve => {
+    try {
+      const el = new Audio(SILENT_WAV_DATA_URI);
+      el.play().then(() => { el.pause(); resolve(); }).catch(() => resolve());
+    } catch(_) { resolve(); }
+  });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise(resolve => setTimeout(resolve, ms))]);
 }
 
 function getCtx() {
@@ -963,7 +973,7 @@ function nowPos() {
 
 async function play(fromPos) {
   if (!audioBuffer) return;
-  unlockAudioSession();
+  await withTimeout(unlockAudioSession(), 1000); // give iOS a moment to actually apply the audio-session claim
   killSource();
   teardownChain(nodes); // release the previous chain before building a fresh one
 
@@ -1369,7 +1379,8 @@ function createMediaRecorder(stream) {
 }
 
 async function startRecording() {
-  unlockAudioSession(); // must run before the getUserMedia await to stay inside the tap gesture
+  // Must run before the getUserMedia await to stay inside the tap gesture.
+  await withTimeout(unlockAudioSession(), 1000);
 
   // Diagnose the two most common non-permission reasons getUserMedia fails on mobile,
   // before even attempting it, since the browser's own NotAllowedError message doesn't
