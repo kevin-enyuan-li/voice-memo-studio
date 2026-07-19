@@ -875,6 +875,23 @@ function buildChain(ctx, pr) {
            echoDly, echoFb, echoWet, conv, revWet, nrConv, nrWet, master };
 }
 
+// Disconnects every node in a chain built by buildChain() so it (and its two
+// ConvolverNode impulse-response buffers) can actually be garbage collected.
+// Every restart (loop/bypass/fade toggles, param drags, NS toggle, plain
+// play/pause cycles) used to call buildChain() again without ever releasing the
+// previous chain — each one just kept accumulating in memory. Invisible on
+// desktop's much larger memory budget, but on iOS Safari's tight per-tab limit
+// enough of these leaked chains eventually gets the whole page killed/crashed.
+function teardownChain(nd) {
+  if (!nd) return;
+  for (const key in nd) {
+    const node = nd[key];
+    if (node && typeof node.disconnect === 'function') {
+      try { node.disconnect(); } catch(_) {}
+    }
+  }
+}
+
 function patchNodes(nd, pr) {
   nd.input.gain.value      = pr.volume;
   nd.bass.gain.value       = pr.bassOn ? pr.bassGain : 0;
@@ -945,6 +962,7 @@ async function play(fromPos) {
   if (!audioBuffer) return;
   unlockAudioSession();
   killSource();
+  teardownChain(nodes); // release the previous chain before building a fresh one
 
   const ctx = getCtx();
   if (ctx.state !== 'running') { try { await ctx.resume(); } catch(_) {} }
@@ -1001,6 +1019,7 @@ function stop() {
   killSource(); isPlaying = false; playOffset = 0;
   playBtn.textContent = '▶'; seekBar.value = 0; curTimeEl.textContent = '0:00';
   cancelAnimationFrame(rafId);
+  teardownChain(nodes); nodes = null; // release memory immediately rather than at the next play()
   renderWave();
 }
 
@@ -1571,6 +1590,7 @@ function disableMonitor() {
 async function rebuildMonitorChain() {
   if (monitorMode !== 'effects' || !monitorCtx || !monitorMonoNode) return;
   try { monitorMonoNode.disconnect(); } catch(_) {}
+  teardownChain(monitorChain); // same reused monitorCtx — must release the old chain explicitly
   monitorChain = null;
   const pr = getParams();
   if (pr.nsOn) { try { await ensureGate(monitorCtx); } catch(_) {} }
