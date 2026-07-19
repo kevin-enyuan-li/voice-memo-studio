@@ -38,9 +38,10 @@
 
     /* Recording panel */
     .rec-panel { background: var(--card); border-radius: 12px; border: 1px solid var(--red);
-      padding: 16px 18px; margin-bottom: 12px; display: none;
-      align-items: center; gap: 14px; flex-wrap: wrap; }
+      padding: 16px 18px; margin-bottom: 12px; display: none; flex-direction: column; gap: 12px; }
     .rec-panel.show { display: flex; }
+    .rec-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .rec-gain-row .sl-label { width: auto; }
     .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
     .rec-panel.paused .rec-timer { opacity: .55; }
     .rec-timer { font-size: 1.3rem; font-weight: 700; color: var(--red);
@@ -221,14 +222,21 @@
 
   <!-- Recording panel -->
   <div class="rec-panel" id="recPanel">
-    <span class="rec-dot"></span>
-    <span id="recStatusLabel" style="color:var(--red);font-weight:600;font-size:.85rem">REC</span>
-    <span class="rec-timer" id="recTimer">0:00</span>
-    <div class="level-wrap"><div class="level-bar" id="levelBar"></div></div>
-    <button class="btn-monitor" id="btnMonitor" title="Click to cycle: Off → 🎙 Direct (min latency) → 🎛 Effects → Off. Use headphones!">🔇 Monitor</button>
-    <button class="btn-monitor" id="btnPauseRec">⏸ Pause</button>
-    <button class="btn-monitor" id="btnResetRec" title="Discard this recording and start over from 0:00">↺ Reset</button>
-    <button class="btn-stoprec" id="btnStopRec">■ Stop</button>
+    <div class="rec-row">
+      <span class="rec-dot"></span>
+      <span id="recStatusLabel" style="color:var(--red);font-weight:600;font-size:.85rem">REC</span>
+      <span class="rec-timer" id="recTimer">0:00</span>
+      <div class="level-wrap"><div class="level-bar" id="levelBar"></div></div>
+      <button class="btn-monitor" id="btnMonitor" title="Click to cycle: Off → 🎙 Direct (min latency) → 🎛 Effects → Off. Use headphones!">🔇 Monitor</button>
+      <button class="btn-monitor" id="btnPauseRec">⏸ Pause</button>
+      <button class="btn-monitor" id="btnResetRec" title="Discard this recording and start over from 0:00">↺ Reset</button>
+      <button class="btn-stoprec" id="btnStopRec">■ Stop</button>
+    </div>
+    <div class="sl-row rec-gain-row">
+      <span class="sl-label" title="Boosts or attenuates the mic signal before it's recorded, the level meter, and Monitor">🎚️ Input Gain</span>
+      <input type="range" class="sl" id="sInputGain" min="0" max="300" value="100">
+      <span class="sl-val" id="vInputGain">100%</span>
+    </div>
   </div>
 
   <!-- Drop zone -->
@@ -584,6 +592,7 @@ let mediaRecorder = null;
 let recordChunks = [];
 let recordStream = null;
 let micSourceNode = null;   // MediaStreamSource inside main audioCtx
+let recGainNode = null;     // adjustable Input Gain, applied before the meter/downmix/recorder
 let micMonoNode = null;     // forces the raw mic signal down to a real (non-silent) mono channel
 let micMonoDest = null;     // MediaStreamDestination the MediaRecorder actually captures from
 let recAnalyser = null;
@@ -600,6 +609,7 @@ let monitorMode   = 'off';  // 'off' | 'direct' | 'effects'
 let monitorChain  = null;
 let monitorCtx    = null;   // dedicated low-latency AudioContext
 let monitorMicSrc = null;   // MediaStreamSource inside monitorCtx
+let monitorGainNode = null; // same Input Gain applied to the live monitor path
 let monitorMonoNode = null; // forces the monitored signal to mono, same reasoning as recording
 // convenience alias used throughout
 const isMonitoring = () => monitorMode !== 'off';
@@ -646,6 +656,8 @@ const btnMonitor  = $('btnMonitor');
 const levelBar    = $('levelBar');
 const recTimerEl  = $('recTimer');
 const recStatusLabel = $('recStatusLabel');
+const sInputGain  = $('sInputGain');
+const vInputGain  = $('vInputGain');
 const btnLibrary      = $('btnLibrary');
 const libraryPanel    = $('libraryPanel');
 const libraryList     = $('libraryList');
@@ -1356,6 +1368,21 @@ btnPauseRec.addEventListener('click', () => { isPaused ? resumeRecording() : pau
 btnResetRec.addEventListener('click', resetRecording);
 btnMonitor.addEventListener('click', toggleMonitor);
 
+// ── Input Gain (recording) ──────────────────────────────────────────────────
+const INPUT_GAIN_KEY = 'vms_input_gain_v1';
+sInputGain.addEventListener('input', () => {
+  vInputGain.textContent = `${sInputGain.value}%`;
+  const gain = val('sInputGain') / 100;
+  if (recGainNode) recGainNode.gain.value = gain;
+  if (monitorGainNode) monitorGainNode.gain.value = gain;
+  try { localStorage.setItem(INPUT_GAIN_KEY, sInputGain.value); } catch(_) {}
+});
+try {
+  const savedGain = localStorage.getItem(INPUT_GAIN_KEY);
+  if (savedGain != null) sInputGain.value = savedGain;
+} catch(_) {}
+vInputGain.textContent = `${sInputGain.value}%`;
+
 // Forces a signal down to a single real channel via the standard 0.5*(L+R) downmix.
 // Some mics/headsets report 2 input channels to the OS but only actually wire the left
 // one, leaving the right silent (or, once naively duplicated, unbalanced) — this fixes
@@ -1424,15 +1451,21 @@ async function startRecording() {
   const ctx = getCtx();
   micSourceNode = ctx.createMediaStreamSource(recordStream);
 
-  // Analyser taps the raw mic for the level meter (no effects, no output)
+  // Adjustable input gain (Input Gain slider) — applied before the level meter, mono
+  // downmix, and MediaRecorder, so what the meter shows is what actually gets captured.
+  recGainNode = ctx.createGain();
+  recGainNode.gain.value = val('sInputGain') / 100;
+  micSourceNode.connect(recGainNode);
+
+  // Analyser taps the gain-adjusted mic signal for the level meter (no effects, no output)
   recAnalyser = ctx.createAnalyser();
   recAnalyser.fftSize = 256;
-  micSourceNode.connect(recAnalyser);
+  recGainNode.connect(recAnalyser);
 
   // The MediaRecorder captures THIS mono-forced stream, not the raw mic stream —
   // see makeMonoDownmixNode() for why.
   micMonoNode = makeMonoDownmixNode(ctx);
-  micSourceNode.connect(micMonoNode);
+  recGainNode.connect(micMonoNode);
   micMonoDest = ctx.createMediaStreamDestination();
   micMonoNode.connect(micMonoDest);
 
@@ -1522,6 +1555,7 @@ function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
   if (micSourceNode) { try { micSourceNode.disconnect(); } catch(_) {} micSourceNode = null; }
+  if (recGainNode) { try { recGainNode.disconnect(); } catch(_) {} recGainNode = null; }
   if (micMonoNode) { try { micMonoNode.disconnect(); } catch(_) {} micMonoNode = null; }
   if (micMonoDest) { try { micMonoDest.stream.getTracks().forEach(t => t.stop()); } catch(_) {} micMonoDest = null; }
   recAnalyser = null;
@@ -1571,10 +1605,15 @@ async function enableMonitor(mode) {
   monitorCtx = new AudioContext({ latencyHint: 'interactive' });
   monitorMicSrc = monitorCtx.createMediaStreamSource(recordStream);
 
+  // Same input gain as recording, so what you hear roughly matches what gets captured.
+  monitorGainNode = monitorCtx.createGain();
+  monitorGainNode.gain.value = val('sInputGain') / 100;
+  monitorMicSrc.connect(monitorGainNode);
+
   // Same mono-forcing fix as recording — otherwise monitoring would sound left-heavy/
   // unbalanced on mics/headsets that only wire the left input channel.
   monitorMonoNode = makeMonoDownmixNode(monitorCtx);
-  monitorMicSrc.connect(monitorMonoNode);
+  monitorGainNode.connect(monitorMonoNode);
 
   if (mode === 'direct') {
     // Shortest possible path: mic → speakers, no processing, minimum latency
@@ -1593,6 +1632,7 @@ async function enableMonitor(mode) {
 
 function disableMonitor() {
   if (monitorMicSrc) { try { monitorMicSrc.disconnect(); } catch(_) {} monitorMicSrc = null; }
+  monitorGainNode = null;
   monitorMonoNode = null;
   monitorChain = null;
   if (monitorCtx) { monitorCtx.close(); monitorCtx = null; }
