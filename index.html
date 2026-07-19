@@ -32,6 +32,11 @@
     .btn-rec:hover { border-color: var(--red); color: var(--red); }
     .btn-rec.recording { background: rgba(239,68,68,.15); border-color: var(--red);
       color: var(--red); }
+    .device-row { display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin-bottom: 12px; font-size: .8rem; color: var(--muted); flex-wrap: wrap; }
+    .device-row select { max-width: 220px; background: var(--card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: .78rem;
+      text-overflow: ellipsis; }
     .rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
       background: var(--red); animation: blink 1s ease-in-out infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
@@ -211,6 +216,11 @@
     <button class="btn-rec" id="btnLibrary">📚 Library</button>
   </div>
 
+  <div class="device-row" id="inputDeviceRow">
+    <span class="device-label">🎙️ Mic</span>
+    <select id="selInputDevice"><option value="">System Default</option></select>
+  </div>
+
   <!-- Saved memo library -->
   <div class="library-panel" id="libraryPanel">
     <div class="library-header">
@@ -275,6 +285,10 @@
       <div class="time"><span id="curTime">0:00</span> / <span id="totTime">0:00</span></div>
     </div>
     <button class="btn-monitor" id="btnBypass" title="A/B compare: toggle between dry (unprocessed) and fully effected audio.">🎧 Bypass</button>
+    <div class="device-row" id="outputDeviceRow" style="display:none">
+      <span class="device-label">🔊 Output</span>
+      <select id="selOutputDevice"><option value="">System Default</option></select>
+    </div>
   </div>
 
   <!-- Effects -->
@@ -658,6 +672,9 @@ const recTimerEl  = $('recTimer');
 const recStatusLabel = $('recStatusLabel');
 const sInputGain  = $('sInputGain');
 const vInputGain  = $('vInputGain');
+const selInputDevice  = $('selInputDevice');
+const selOutputDevice = $('selOutputDevice');
+const outputDeviceRow = $('outputDeviceRow');
 const btnLibrary      = $('btnLibrary');
 const libraryPanel    = $('libraryPanel');
 const libraryList     = $('libraryList');
@@ -1357,6 +1374,53 @@ waveCanvas.addEventListener('pointerup', e => {
   updateTrimDisplay();
 });
 
+// ── Audio device selection ─────────────────────────────────────────────────
+// Input device labels/full list require having granted mic permission at least once
+// (before that, enumerateDevices() still returns entries but with blank labels) — so
+// this gets called again right after a successful getUserMedia, not just at load.
+const outputSinkSupported = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+if (outputSinkSupported) outputDeviceRow.style.display = 'flex';
+
+function populateDeviceSelect(sel, devices, kind, fallbackLabel) {
+  const prevValue = sel.value;
+  const list = devices.filter(d => d.kind === kind);
+  sel.innerHTML = '<option value="">System Default</option>' +
+    list.map((d, i) => {
+      const label = (d.label || `${fallbackLabel} ${i + 1}`).replace(/"/g, '&quot;');
+      return `<option value="${d.deviceId}">${label}</option>`;
+    }).join('');
+  // Keep the previous selection if that device is still present, else fall back to default
+  sel.value = list.some(d => d.deviceId === prevValue) ? prevValue : '';
+}
+
+async function refreshDeviceLists() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    populateDeviceSelect(selInputDevice, devices, 'audioinput', 'Microphone');
+    if (outputSinkSupported) populateDeviceSelect(selOutputDevice, devices, 'audiooutput', 'Speaker');
+  } catch (_) {}
+}
+
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', refreshDeviceLists);
+}
+
+if (outputSinkSupported) {
+  selOutputDevice.addEventListener('change', async () => {
+    const id = selOutputDevice.value;
+    try {
+      await getCtx().setSinkId(id);
+      if (monitorCtx) { try { await monitorCtx.setSinkId(id); } catch(_) {} }
+      setStatus('Output device changed.', 'ok'); setTimeout(() => setStatus(''), 1500);
+    } catch (e) {
+      setStatus('Could not switch output device: ' + e.message, 'err');
+    }
+  });
+}
+
+refreshDeviceLists();
+
 // ── Recording ──────────────────────────────────────────────────────────────
 btnRecord.addEventListener('click', () => {
   if (isRecording) return;
@@ -1429,6 +1493,7 @@ async function startRecording() {
         autoGainControl:   false,  // we have our own volume control
         latency:           0,      // request minimum input buffering
         channelCount:      { ideal: 1 }, // many mics report 2 channels but only wire the left one
+        ...(selInputDevice.value ? { deviceId: { exact: selInputDevice.value } } : {}),
       },
       video: false,
     });
@@ -1444,6 +1509,8 @@ async function startRecording() {
     }
     return;
   }
+
+  refreshDeviceLists(); // now that permission is granted, real device labels are available
 
   resetMemo();
 
@@ -1603,6 +1670,9 @@ async function enableMonitor(mode) {
 
   // Dedicated low-latency context — separate from playback context
   monitorCtx = new AudioContext({ latencyHint: 'interactive' });
+  if (outputSinkSupported && selOutputDevice.value) {
+    try { await monitorCtx.setSinkId(selOutputDevice.value); } catch(_) {}
+  }
   monitorMicSrc = monitorCtx.createMediaStreamSource(recordStream);
 
   // Same input gain as recording, so what you hear roughly matches what gets captured.
