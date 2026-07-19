@@ -1620,6 +1620,31 @@ async function rebuildMonitorChain() {
   monitorMonoNode.connect(monitorChain.input);
 }
 
+// Boosts a buffer's peak amplitude up to targetPeak, in place. We record with the
+// OS's automatic gain control deliberately disabled (echoCancellation/noiseSuppression/
+// autoGainControl are all off, to avoid their processing artifacts) but never apply an
+// equivalent replacement of our own — so unless the mic is held close and spoken into
+// loudly, raw captures can end up far quieter than a typical recording app would
+// produce (confirmed on-device: recordings measured around -47dB peak, inaudible on a
+// phone speaker even with the in-app Volume slider maxed at 200%). No-ops on buffers
+// that are already loud enough or genuinely silent (nothing to normalize against).
+function normalizeBuffer(buf, targetPeak = 0.9) {
+  let peak = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < data.length; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+  }
+  if (peak < 1e-6 || peak >= targetPeak) return;
+  const gain = targetPeak / peak;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < data.length; i++) data[i] *= gain;
+  }
+}
+
 async function finishRecording() {
   if (recordChunks.length === 0) { setStatus('Recording was empty.', 'err'); return; }
   setStatus('Processing recording…', 'proc');
@@ -1631,6 +1656,7 @@ async function finishRecording() {
     const ctx = getCtx();
     const ab  = await blob.arrayBuffer();
     audioBuffer = await ctx.decodeAudioData(ab);
+    normalizeBuffer(audioBuffer);
     baseName = 'recording_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
     loadedUI(`Recorded: ${fmt(audioBuffer.duration)}`);
   } catch(e) {
