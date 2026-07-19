@@ -436,6 +436,11 @@
 
   <div class="status" id="status"></div>
 
+  <pre id="diagOutput" style="display:none; white-space:pre-wrap; word-break:break-word;
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; margin:0 0 14px; font-size:.72rem; line-height:1.5;
+    color:var(--text); max-height:50vh; overflow:auto; -webkit-user-select:text; user-select:text;"></pre>
+
   <div class="export-options" id="exportOptions">
     <label>MP3 quality
       <select id="selMp3Bitrate">
@@ -630,6 +635,7 @@ const seekBar     = $('seekBar');
 const curTimeEl   = $('curTime');
 const totTimeEl   = $('totTime');
 const statusEl    = $('status');
+const diagOutput  = $('diagOutput');
 const btnWav      = $('btnWav');
 const btnMp3      = $('btnMp3');
 const btnM4a      = $('btnM4a');
@@ -2003,38 +2009,56 @@ btnBypass.addEventListener('click', () => {
 
 // ── Audio diagnostics (for debugging silent playback on devices we can't attach
 // devtools to, e.g. iPhone without a Mac) ───────────────────────────────────
-btnDiag.addEventListener('click', async () => {
-  unlockAudioSession();
-  const ctx = getCtx();
-  const stateBefore = ctx.state;
-  let resumeError = null;
-  try { await ctx.resume(); } catch (e) { resumeError = e && e.message; }
+// Races a promise against a timeout so a stuck/never-settling await (which we've
+// seen hints of on iOS) can't block the rest of the diagnostics from rendering.
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise.then(() => ({ ok: true, error: null })).catch(e => ({ ok: false, error: (e && e.message) || String(e) })),
+    new Promise(resolve => setTimeout(() => resolve({ ok: false, error: `timed out after ${ms}ms (never resolved or rejected)` }), ms)),
+  ]);
+}
 
-  let unlockError = null;
+btnDiag.addEventListener('click', async () => {
+  // Render on the page rather than alert() — if alert() itself is being blocked for
+  // some reason, this still shows up, and unlike a popup it can't silently vanish.
+  diagOutput.style.display = 'block';
+  diagOutput.textContent = 'Running diagnostics…';
+
+  let ctx, stateBefore;
   try {
-    const el = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
-    await el.play();
-    el.pause();
-  } catch (e) { unlockError = e && e.message; }
+    unlockAudioSession();
+    ctx = getCtx();
+    stateBefore = ctx.state;
+  } catch (e) {
+    diagOutput.textContent = 'Failed before diagnostics could run:\n' + (e && e.stack || e);
+    return;
+  }
+
+  const resumeResult = await withTimeout(ctx.resume(), 3000);
+
+  const el = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+  const unlockResult = await withTimeout(el.play().then(() => el.pause()), 3000);
 
   const info = {
     userAgent: navigator.userAgent,
     isSecureContext: window.isSecureContext,
     ctxStateBefore: stateBefore,
     ctxStateAfterResume: ctx.state,
-    resumeError,
+    resumeOk: resumeResult.ok,
+    resumeError: resumeResult.error,
     sampleRate: ctx.sampleRate,
     baseLatency: ctx.baseLatency,
     destChannelCount: ctx.destination.channelCount,
     destMaxChannelCount: ctx.destination.maxChannelCount,
-    unlockAudioPlayError: unlockError,
+    unlockAudioOk: unlockResult.ok,
+    unlockAudioError: unlockResult.error,
     audioBufferLoaded: !!audioBuffer,
     audioBufferDuration: audioBuffer ? audioBuffer.duration : null,
     audioBufferChannels: audioBuffer ? audioBuffer.numberOfChannels : null,
     isPlaying,
     bypassOn,
   };
-  alert(JSON.stringify(info, null, 2));
+  diagOutput.textContent = JSON.stringify(info, null, 2);
 });
 
 // ── Playback events ────────────────────────────────────────────────────────
