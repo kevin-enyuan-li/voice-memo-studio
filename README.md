@@ -50,7 +50,7 @@ All effects are built from native Web Audio nodes and can be toggled and tweaked
 | 🔁 Echo | Delay, Feedback, Wet | `DelayNode` with feedback loop |
 | 🎸 Bass | Boost (dB), Freq | Lowshelf `BiquadFilterNode` |
 | ✨ Treble | Boost (dB), Freq | Highshelf `BiquadFilterNode` |
-| 🔥 Warmth | Drive | `WaveShaperNode` with a generated soft-clip distortion curve |
+| 🔥 Warmth | Drive | `WaveShaperNode` with a generated soft-clip distortion curve. Its `oversample` mode (which [adds a small amount of latency by design](https://developer.mozilla.org/en-US/docs/Web/API/WaveShaperNode/oversample) when active) is only set to `'2x'` while Warmth is actually on — `'none'` otherwise — so it doesn't cost monitor latency when unused. |
 | 🏠 Nice Room | Size, Wet | `ConvolverNode` fed a custom-synthesized impulse response with multi-tap early reflections + a diffuse tail, scaled by room size |
 | 🔇 Noise Reduce | Strength | A custom `AudioWorkletProcessor` ("noise-gate") that gates the signal below an envelope-following threshold |
 

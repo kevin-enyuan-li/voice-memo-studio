@@ -876,7 +876,11 @@ function buildChain(ctx, pr) {
   treb.type = 'highshelf'; treb.frequency.value = pr.trebFreq;
   treb.gain.value = pr.trebOn ? pr.trebGain : 0;
   const dist  = ctx.createWaveShaper();
-  dist.curve  = distCurve(pr.warmOn ? pr.warmDrive : 0); dist.oversample = '2x';
+  dist.curve  = distCurve(pr.warmOn ? pr.warmDrive : 0);
+  // Oversampling adds a small but real amount of latency to the dry signal (every
+  // note/word passes through this node) — MDN documents this explicitly. Only pay for
+  // it while Warmth is actually on; otherwise this node has no dry latency cost.
+  dist.oversample = pr.warmOn ? '2x' : 'none';
   const dryGain = ctx.createGain(); dryGain.gain.value = 1;
   const echoDly = ctx.createDelay(3.0); echoDly.delayTime.value = pr.echoDly;
   const echoFb  = ctx.createGain(); echoFb.gain.value = pr.echoFb;
@@ -941,6 +945,7 @@ function patchNodes(nd, pr) {
   nd.treb.gain.value       = pr.trebOn ? pr.trebGain : 0;
   nd.treb.frequency.value  = pr.trebFreq;
   nd.dist.curve            = distCurve(pr.warmOn ? pr.warmDrive : 0);
+  nd.dist.oversample       = pr.warmOn ? '2x' : 'none';
   nd.echoDly.delayTime.value = pr.echoDly;
   nd.echoFb.gain.value     = pr.echoFb;
   nd.echoWet.gain.value    = pr.echoOn ? pr.echoWet : 0;
