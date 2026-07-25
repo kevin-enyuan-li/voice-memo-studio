@@ -2008,12 +2008,31 @@ function dl(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 8000);
 }
 
+// Shares a file via the OS share sheet (AirDrop, Messages, Save to Files, etc.) where
+// supported, falling back to a plain download everywhere else — including when the
+// user explicitly cancels the share sheet, which should NOT also trigger a download.
+async function shareOrDownload(blob, name, mimeType) {
+  if (navigator.canShare) {
+    const file = new File([blob], name, { type: mimeType });
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // user cancelled — don't force a download too
+        // any other error: fall through to the plain download below
+      }
+    }
+  }
+  dl(blob, name);
+}
+
 async function exportWAV() {
   if (!audioBuffer) return;
   setStatus('Rendering audio…', 'proc'); setExportBtns(true);
   try {
     const rendered = await renderOffline(getParams(), getExportOptions());
-    dl(new Blob([encodeWAV(rendered)], {type:'audio/wav'}), `${baseName}_studio.wav`);
+    await shareOrDownload(new Blob([encodeWAV(rendered)], {type:'audio/wav'}), `${baseName}_studio.wav`, 'audio/wav');
     setStatus('WAV saved!', 'ok');
   } catch(e) { setStatus('Export error: ' + e.message, 'err'); }
   finally { setExportBtns(false); setTimeout(() => setStatus(''), 4000); }
@@ -2042,7 +2061,7 @@ async function exportMP3() {
       if (c.length) chunks.push(new Uint8Array(c));
     }
     const fin = enc.flush(); if (fin.length) chunks.push(new Uint8Array(fin));
-    dl(new Blob(chunks, {type:'audio/mp3'}), `${baseName}_studio.mp3`);
+    await shareOrDownload(new Blob(chunks, {type:'audio/mp3'}), `${baseName}_studio.mp3`, 'audio/mp3');
     setStatus('MP3 saved!', 'ok');
   } catch(e) { setStatus('Export error: ' + e.message, 'err'); }
   finally { setExportBtns(false); setTimeout(() => setStatus(''), 4000); }
@@ -2100,7 +2119,7 @@ async function exportM4A() {
     });
 
     await tmpCtx.close();
-    dl(new Blob(chunks, { type: 'audio/mp4' }), `${baseName}_studio.m4a`);
+    await shareOrDownload(new Blob(chunks, { type: 'audio/mp4' }), `${baseName}_studio.m4a`, 'audio/mp4');
     setStatus('M4A saved!', 'ok');
   } catch(e) {
     setStatus('M4A export error: ' + e.message, 'err');

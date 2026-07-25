@@ -66,6 +66,8 @@ Exports run the full effects chain through an `OfflineAudioContext` for fast, no
 
 Exported files are named `<original-basename>_studio.<ext>` (or `recording_<timestamp>_studio.<ext>` for fresh recordings).
 
+**Sharing**: on browsers/devices that support sharing files (`navigator.canShare({files})`) — notably mobile Safari and Chrome — exporting opens the native share sheet (AirDrop, Messages, Mail, Save to Files, etc.) instead of a plain download. Cancelling the share sheet does nothing further (no forced download); a real share failure falls back to a normal download. Desktop browsers without file-sharing support just get the regular download, exactly as before.
+
 ### Saved memo library
 - **📚 Library** (next to Record New Memo) opens a panel listing memos saved locally in **IndexedDB** (`vms_library_v1`), persisting across page reloads — name, duration, and saved date, with **▶ Load** and **🗑 Delete** (confirms before deleting) per row.
 - **📚 Save to Library** (in the export row) WAV-encodes the *current* `audioBuffer` — so any trim you've applied is reflected — and stores it as a new library entry. It does not include the live effects rack (that's what the format exports are for); think of the library as source-material checkpoints, not final renders.
