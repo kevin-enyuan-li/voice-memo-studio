@@ -47,6 +47,21 @@
     .rec-panel.show { display: flex; }
     .rec-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     .rec-gain-row .sl-label { width: auto; }
+    .transcribe-row { display: none; }
+    .transcribe-row.show { display: flex; }
+    .transcribe-row .sl-label { width: auto; }
+    .transcribe-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .transcribe-live .interim { opacity: .55; font-style: italic; }
+    .transcript-wrap { display: none; background: var(--card); border-radius: 12px;
+      padding: 12px 14px; margin-bottom: 14px; }
+    .transcript-wrap.show { display: block; }
+    .transcript-header { display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px; font-size: .82rem; color: var(--muted); font-weight: 600; }
+    .transcript-actions { display: flex; gap: 8px; }
+    #transcriptText { width: 100%; min-height: 80px; resize: vertical; background: var(--bg);
+      color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      font-size: .85rem; font-family: inherit; line-height: 1.5; box-sizing: border-box; }
     .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
     .rec-panel.paused .rec-timer { opacity: .55; }
     .rec-timer { font-size: 1.3rem; font-weight: 700; color: var(--red);
@@ -199,6 +214,8 @@
     .lib-name { font-weight: 600; font-size: .9rem; white-space: nowrap; overflow: hidden;
       text-overflow: ellipsis; }
     .lib-meta { color: var(--muted); font-size: .76rem; margin-top: 2px; }
+    .lib-transcript { color: var(--muted); font-size: .74rem; margin-top: 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (max-width: 500px) { .fx-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -247,6 +264,11 @@
       <input type="range" class="sl" id="sInputGain" min="0" max="300" value="100">
       <span class="sl-val" id="vInputGain">100%</span>
     </div>
+    <div class="sl-row transcribe-row" id="transcribeRow">
+      <span class="sl-label" title="Live speech-to-text while recording (Chrome/Edge only)">📝 Transcribe</span>
+      <label class="tog"><input type="checkbox" id="tTranscribe"><span class="tog-sl"></span></label>
+      <span class="transcribe-live" id="transcribeLive"></span>
+    </div>
   </div>
 
   <!-- Drop zone -->
@@ -272,6 +294,18 @@
       <button class="btn-trim-reset" id="btnResetTrim">↺ Reset</button>
       <button class="btn-trim-reset" id="btnLoop" title="Loop playback within the current trim selection.">🔁 Loop</button>
     </div>
+  </div>
+
+  <!-- Transcript (shown when the current memo has one) -->
+  <div class="transcript-wrap" id="transcriptWrap">
+    <div class="transcript-header">
+      <span>📝 Transcript</span>
+      <div class="transcript-actions">
+        <button class="btn-trim-reset" id="btnCopyTranscript">📋 Copy</button>
+        <button class="btn-trim-reset" id="btnExportTranscript">💾 Export .txt</button>
+      </div>
+    </div>
+    <textarea id="transcriptText" placeholder="Transcript will appear here…"></textarea>
   </div>
 
   <!-- Playback -->
@@ -618,6 +652,11 @@ let pauseStartedAt = 0;
 let levelRafId = null;
 let recTimerRafId = null;
 
+// Live transcription (Chrome/Edge only — Safari has never implemented SpeechRecognition)
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let transcriptFinal = ''; // accumulated finalized text for the recording in progress
+
 // ── Monitor state ──────────────────────────────────────────────────────────
 let monitorMode   = 'off';  // 'off' | 'direct' | 'effects'
 let monitorChain  = null;
@@ -672,6 +711,13 @@ const recTimerEl  = $('recTimer');
 const recStatusLabel = $('recStatusLabel');
 const sInputGain  = $('sInputGain');
 const vInputGain  = $('vInputGain');
+const transcribeRow  = $('transcribeRow');
+const tTranscribe    = $('tTranscribe');
+const transcribeLive = $('transcribeLive');
+const transcriptWrap = $('transcriptWrap');
+const transcriptText = $('transcriptText');
+const btnCopyTranscript   = $('btnCopyTranscript');
+const btnExportTranscript = $('btnExportTranscript');
 const selInputDevice  = $('selInputDevice');
 const selOutputDevice = $('selOutputDevice');
 const outputDeviceRow = $('outputDeviceRow');
@@ -711,6 +757,10 @@ function resetMemo() {
 
   dropZone.classList.remove('loaded');
   dropContent.innerHTML = dropContentDefault;
+
+  transcriptText.value = '';
+  transcriptWrap.classList.remove('show');
+  transcribeLive.textContent = '';
 
   setStatus('');
 }
@@ -1452,6 +1502,27 @@ try {
 } catch(_) {}
 vInputGain.textContent = `${sInputGain.value}%`;
 
+// ── Live transcription toggle (recording) ───────────────────────────────────
+const TRANSCRIBE_KEY = 'vms_transcribe_v1';
+tTranscribe.addEventListener('change', () => {
+  try { localStorage.setItem(TRANSCRIBE_KEY, tTranscribe.checked ? '1' : '0'); } catch(_) {}
+});
+try { tTranscribe.checked = localStorage.getItem(TRANSCRIBE_KEY) === '1'; } catch(_) {}
+
+btnCopyTranscript.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(transcriptText.value);
+    setStatus('Transcript copied.', 'ok'); setTimeout(() => setStatus(''), 2000);
+  } catch (e) {
+    setStatus('Could not copy — select the text and copy manually.', 'err');
+    setTimeout(() => setStatus(''), 3000);
+  }
+});
+btnExportTranscript.addEventListener('click', async () => {
+  const blob = new Blob([transcriptText.value], { type: 'text/plain' });
+  await shareOrDownload(blob, `${baseName || 'memo'}_transcript.txt`, 'text/plain');
+});
+
 // Forces a signal down to a single real channel via the standard 0.5*(L+R) downmix.
 // Some mics/headsets report 2 input channels to the OS but only actually wire the left
 // one, leaving the right silent (or, once naively duplicated, unbalanced) — this fixes
@@ -1473,6 +1544,61 @@ function createMediaRecorder(stream) {
   rec.onstop = finishRecording;
   return rec;
 }
+
+// ── Live transcription (SpeechRecognition) ──────────────────────────────────
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function updateLiveTranscript(final, interim) {
+  transcribeLive.innerHTML = escapeHtml(final) +
+    (interim ? `<span class="interim">${escapeHtml(interim)}</span>` : '');
+}
+function createRecognitionInstance() {
+  const rec = new SpeechRec();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = navigator.language || 'en-US';
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) transcriptFinal += t + ' ';
+      else interim += t;
+    }
+    updateLiveTranscript(transcriptFinal, interim);
+  };
+  rec.onerror = e => console.warn('Speech recognition error:', e.error);
+  // Some engines (Chrome's included) auto-stop after a silence gap even with
+  // continuous:true — restart so a long memo with pauses doesn't lose transcription.
+  // The `recognition === rec` check ignores a stale instance's onend after we've
+  // already intentionally moved on (stopTranscription clears `recognition` first).
+  rec.onend = () => {
+    if (isRecording && !isPaused && tTranscribe.checked && recognition === rec) {
+      try { rec.start(); } catch(_) {}
+    }
+  };
+  return rec;
+}
+// `fresh` resets the accumulated transcript — true for a genuinely new recording
+// (or a Reset), false when resuming from pause (keeps what's already been captured).
+function startTranscription(fresh) {
+  if (!SpeechRec || !tTranscribe.checked) return;
+  if (fresh) { transcriptFinal = ''; transcribeLive.textContent = ''; }
+  recognition = createRecognitionInstance();
+  try { recognition.start(); } catch(_) {}
+}
+function stopTranscription() {
+  if (!recognition) return;
+  const rec = recognition;
+  recognition = null; // clear first so the old instance's onend won't restart it
+  rec.onend = null;
+  try { rec.stop(); } catch(_) {}
+}
+function showTranscriptIfNonEmpty() {
+  if (transcriptText.value.trim()) transcriptWrap.classList.add('show');
+  else { transcriptWrap.classList.remove('show'); transcriptText.value = ''; }
+}
+if (SpeechRec) transcribeRow.classList.add('show');
 
 async function startRecording() {
   // Must run before the getUserMedia await to stay inside the tap gesture.
@@ -1559,6 +1685,7 @@ async function startRecording() {
 
   tickLevel();
   tickRecTimer();
+  startTranscription(true);
 }
 
 function pauseRecording() {
@@ -1572,6 +1699,7 @@ function pauseRecording() {
   recPanel.classList.add('paused');
   recStatusLabel.textContent = 'PAUSED';
   btnPauseRec.textContent = '▶ Resume';
+  stopTranscription();
 }
 
 function resumeRecording() {
@@ -1584,6 +1712,7 @@ function resumeRecording() {
   btnPauseRec.textContent = '⏸ Pause';
   tickLevel();
   tickRecTimer();
+  startTranscription(false); // keep what's already been transcribed, just resume listening
 }
 
 // Discards whatever's been captured so far and starts recording over from 0:00,
@@ -1612,6 +1741,8 @@ function resetRecording() {
   cancelAnimationFrame(recTimerRafId);
   tickLevel();
   tickRecTimer();
+  stopTranscription();
+  startTranscription(true); // discard whatever had been transcribed too, matching the audio reset
 
   setStatus('Recording reset — starting fresh.', 'ok');
   setTimeout(() => setStatus(''), 2000);
@@ -1624,6 +1755,7 @@ function stopRecording() {
   isRecording = false;
   isPaused = false;
   recPanel.classList.remove('paused');
+  stopTranscription();
   if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
   if (micSourceNode) { try { micSourceNode.disconnect(); } catch(_) {} micSourceNode = null; }
@@ -1766,6 +1898,8 @@ async function finishRecording() {
     normalizeBuffer(audioBuffer);
     baseName = 'recording_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
     loadedUI(`Recorded: ${fmt(audioBuffer.duration)}`);
+    transcriptText.value = transcriptFinal.trim();
+    showTranscriptIfNonEmpty();
   } catch(e) {
     setStatus('Could not decode recording: ' + e.message, 'err');
   }
@@ -1847,7 +1981,8 @@ async function saveToLibrary() {
   if (!audioBuffer) return;
   try {
     const blob = new Blob([encodeWAV(audioBuffer)], { type: 'audio/wav' });
-    await libAdd({ name: baseName || 'memo', blob, duration: audioBuffer.duration, createdAt: Date.now() });
+    const transcript = transcriptText.value.trim() || null;
+    await libAdd({ name: baseName || 'memo', blob, duration: audioBuffer.duration, createdAt: Date.now(), transcript });
     setStatus('Saved to library.', 'ok'); setTimeout(() => setStatus(''), 2500);
     if (libraryPanel.classList.contains('show')) renderLibraryList();
   } catch(e) {
@@ -1866,11 +2001,15 @@ async function renderLibraryList() {
   memos.sort((a, b) => b.createdAt - a.createdAt);
   libraryList.innerHTML = memos.map(m => {
     const date = new Date(m.createdAt).toLocaleString();
+    const snippet = m.transcript
+      ? `<div class="lib-transcript">📝 ${escapeHtml(m.transcript.slice(0, 80))}${m.transcript.length > 80 ? '…' : ''}</div>`
+      : '';
     return `
       <div class="lib-row" data-id="${m.id}">
         <div class="lib-info">
           <div class="lib-name">${m.name}</div>
           <div class="lib-meta">${fmt(m.duration)} &nbsp;·&nbsp; ${date}</div>
+          ${snippet}
         </div>
         <button class="btn-trim-reset lib-load">▶ Load</button>
         <button class="btn-trim-reset lib-delete">🗑</button>
@@ -1884,7 +2023,11 @@ async function loadFromLibrary(id) {
   if (isRecording) stopRecording();
   resetMemo();
   const ok = await decodeAndLoad(rec.blob, rec.name, rec.blob.size);
-  if (ok) closeLibrary();
+  if (ok) {
+    transcriptText.value = rec.transcript || '';
+    showTranscriptIfNonEmpty();
+    closeLibrary();
+  }
 }
 
 async function deleteFromLibrary(id, name) {
