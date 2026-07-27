@@ -55,6 +55,13 @@
     .transcribe-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .transcribe-live .interim { opacity: .55; font-style: italic; }
+    .translate-live-row { display: none; }
+    .translate-live-row.show { display: flex; }
+    .translate-live-row .sl-label { width: auto; }
+    #selTranslateLang { background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 8px; font-size: .78rem; }
+    .translate-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .transcript-wrap { display: none; background: var(--card); border-radius: 12px;
       padding: 12px 14px; margin-bottom: 14px; }
     .transcript-wrap.show { display: block; }
@@ -66,8 +73,6 @@
       padding: 8px 10px; font-size: .85rem; font-family: inherit; line-height: 1.5; box-sizing: border-box; }
     .translate-row { display: none; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
     .translate-row.show { display: flex; }
-    .translate-row select { background: var(--card); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: .8rem; }
     .translation-wrap { display: none; padding: 0; margin: 10px 0 0; background: transparent; }
     .translation-wrap.show { display: block; }
     .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
@@ -301,6 +306,29 @@
       </select>
       <span class="transcribe-live" id="transcribeLive"></span>
     </div>
+    <div class="sl-row translate-live-row" id="translateLiveRow">
+      <span class="sl-label" title="Translates each finished sentence live as you speak, into the language picked here (needs Transcribe on)">🌐 Live Translate</span>
+      <label class="tog"><input type="checkbox" id="tLiveTranslate"><span class="tog-sl"></span></label>
+      <select id="selTranslateLang">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="it">Italian</option>
+        <option value="pt">Portuguese</option>
+        <option value="zh">Chinese (Simplified)</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="ru">Russian</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+        <option value="nl">Dutch</option>
+        <option value="pl">Polish</option>
+        <option value="tr">Turkish</option>
+        <option value="vi">Vietnamese</option>
+      </select>
+      <span class="translate-live" id="translateLive"></span>
+    </div>
   </div>
 
   <!-- Drop zone -->
@@ -340,26 +368,7 @@
     <textarea id="transcriptText" placeholder="Transcript will appear here…"></textarea>
 
     <div class="translate-row" id="translateRow">
-      <span class="sl-label" style="width:auto">🌐 Translate to</span>
-      <select id="selTranslateLang">
-        <option value="en">English</option>
-        <option value="es">Spanish</option>
-        <option value="fr">French</option>
-        <option value="de">German</option>
-        <option value="it">Italian</option>
-        <option value="pt">Portuguese</option>
-        <option value="zh">Chinese (Simplified)</option>
-        <option value="ja">Japanese</option>
-        <option value="ko">Korean</option>
-        <option value="ru">Russian</option>
-        <option value="ar">Arabic</option>
-        <option value="hi">Hindi</option>
-        <option value="nl">Dutch</option>
-        <option value="pl">Polish</option>
-        <option value="tr">Turkish</option>
-        <option value="vi">Vietnamese</option>
-      </select>
-      <button class="btn-trim-reset" id="btnTranslate">Translate</button>
+      <button class="btn-trim-reset" id="btnTranslate" title="(Re)translate the whole transcript, using the language picked in Live Translate above">🌐 Translate</button>
     </div>
 
     <div class="transcript-wrap translation-wrap" id="translationWrap">
@@ -724,6 +733,13 @@ let recognition = null;
 let transcriptFinal = ''; // accumulated finalized text for the recording in progress
 let transcriptLang = 'en'; // base language subtag the transcript was recognized in
 
+// Live translation of each finalized sentence, in parallel with live transcription
+// (TranslatorAPI feature-detect const lives further down, next to the manual-translate code)
+let translationFinal = ''; // accumulated live-translated text for the recording in progress
+let liveTranslator = null; // reused across sentences so we don't recreate the model each time
+let liveTranslatorPair = null; // `${source}>${target}` the cached liveTranslator was built for
+let translateChain = Promise.resolve(); // serializes translate() calls so sentences land in order
+
 // On-device translation — even newer/more experimental than SpeechRecognition; as of
 // this writing it's Chrome-only, sometimes behind a flag, and may need to download a
 // language-pack model on first use of a given language pair.
@@ -792,7 +808,10 @@ const transcriptText = $('transcriptText');
 const btnCopyTranscript   = $('btnCopyTranscript');
 const btnExportTranscript = $('btnExportTranscript');
 const translateRow    = $('translateRow');
+const translateLiveRow = $('translateLiveRow');
+const tLiveTranslate  = $('tLiveTranslate');
 const selTranslateLang = $('selTranslateLang');
+const translateLive   = $('translateLive');
 const btnTranslate    = $('btnTranslate');
 const translationWrap = $('translationWrap');
 const translationText = $('translationText');
@@ -841,6 +860,7 @@ function resetMemo() {
   transcriptText.value = '';
   transcriptWrap.classList.remove('show');
   transcribeLive.textContent = '';
+  translateLive.textContent = '';
   hideTranslation();
 
   setStatus('');
@@ -1590,6 +1610,14 @@ tTranscribe.addEventListener('change', () => {
 });
 try { tTranscribe.checked = localStorage.getItem(TRANSCRIBE_KEY) === '1'; } catch(_) {}
 
+// Live translation toggle (recording) — translates each finalized sentence as it's
+// transcribed, using the language picked in selTranslateLang below.
+const LIVE_TRANSLATE_KEY = 'vms_live_translate_v1';
+tLiveTranslate.addEventListener('change', () => {
+  try { localStorage.setItem(LIVE_TRANSLATE_KEY, tLiveTranslate.checked ? '1' : '0'); } catch(_) {}
+});
+try { tLiveTranslate.checked = localStorage.getItem(LIVE_TRANSLATE_KEY) === '1'; } catch(_) {}
+
 // Speech recognition language — what you're SPEAKING, independent of the browser's own
 // UI language. Defaults to a smart guess from navigator.language (exact match, then
 // base-language match against the option list, then plain English) but is always
@@ -1727,6 +1755,29 @@ function updateLiveTranscript(final, interim) {
   transcribeLive.innerHTML = escapeHtml(final) +
     (interim ? `<span class="interim">${escapeHtml(interim)}</span>` : '');
 }
+// Translates one finalized sentence and appends it once ready. Chained onto translateChain
+// (rather than fired independently) so sentences land in the order they were spoken even
+// though each translate() call resolves at its own pace.
+function queueLiveTranslation(segment, sourceLanguage) {
+  const text = segment.trim();
+  const targetLanguage = selTranslateLang.value;
+  if (!text || sourceLanguage === targetLanguage) return;
+  translateChain = translateChain.then(async () => {
+    try {
+      const pairKey = sourceLanguage + '>' + targetLanguage;
+      if (!liveTranslator || liveTranslatorPair !== pairKey) {
+        const availability = await Translator.availability({ sourceLanguage, targetLanguage });
+        if (availability === 'unavailable') return;
+        liveTranslator = await Translator.create({ sourceLanguage, targetLanguage });
+        liveTranslatorPair = pairKey;
+      }
+      translationFinal += await liveTranslator.translate(text) + ' ';
+      translateLive.textContent = translationFinal;
+    } catch (e) {
+      console.warn('Live translation error:', e);
+    }
+  });
+}
 function createRecognitionInstance() {
   const rec = new SpeechRec();
   rec.continuous = true;
@@ -1737,7 +1788,10 @@ function createRecognitionInstance() {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) transcriptFinal += t + ' ';
+      if (e.results[i].isFinal) {
+        transcriptFinal += t + ' ';
+        if (tLiveTranslate.checked && TranslatorAPI) queueLiveTranslation(t, transcriptLang);
+      }
       else interim += t;
     }
     updateLiveTranscript(transcriptFinal, interim);
@@ -1758,7 +1812,11 @@ function createRecognitionInstance() {
 // (or a Reset), false when resuming from pause (keeps what's already been captured).
 function startTranscription(fresh) {
   if (!SpeechRec || !tTranscribe.checked) return;
-  if (fresh) { transcriptFinal = ''; transcribeLive.textContent = ''; }
+  if (fresh) {
+    transcriptFinal = ''; transcribeLive.textContent = '';
+    translationFinal = ''; translateLive.textContent = '';
+    liveTranslator = null; liveTranslatorPair = null; translateChain = Promise.resolve();
+  }
   recognition = createRecognitionInstance();
   try { recognition.start(); } catch(_) {}
 }
@@ -1775,6 +1833,7 @@ function showTranscriptIfNonEmpty() {
 }
 if (SpeechRec) transcribeRow.classList.add('show');
 if (TranslatorAPI) translateRow.classList.add('show');
+if (SpeechRec && TranslatorAPI) translateLiveRow.classList.add('show');
 
 async function startRecording() {
   // Must run before the getUserMedia await to stay inside the tap gesture.
@@ -2076,6 +2135,11 @@ async function finishRecording() {
     loadedUI(`Recorded: ${fmt(audioBuffer.duration)}`);
     transcriptText.value = transcriptFinal.trim();
     showTranscriptIfNonEmpty();
+    await translateChain; // let any still-in-flight live translation of the last sentence land first
+    if (translationFinal.trim()) {
+      translationText.value = translationFinal.trim();
+      translationWrap.classList.add('show');
+    }
   } catch(e) {
     setStatus('Could not decode recording: ' + e.message, 'err');
   }
