@@ -47,21 +47,21 @@
     .rec-panel.show { display: flex; }
     .rec-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     .rec-gain-row .sl-label { width: auto; }
-    .transcribe-row { display: none; }
+    .transcribe-row { display: none; flex-wrap: wrap; align-items: flex-start; }
     .transcribe-row.show { display: flex; }
     .transcribe-row .sl-label { width: auto; }
     #selSpeechLang { background: var(--card); color: var(--text); border: 1px solid var(--border);
       border-radius: 6px; padding: 4px 8px; font-size: .78rem; }
     .transcribe-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      white-space: pre-wrap; word-break: break-word; }
     .transcribe-live .interim { opacity: .55; font-style: italic; }
-    .translate-live-row { display: none; }
+    .translate-live-row { display: none; flex-wrap: wrap; align-items: flex-start; }
     .translate-live-row.show { display: flex; }
     .translate-live-row .sl-label { width: auto; }
     #selTranslateLang { background: var(--card); color: var(--text); border: 1px solid var(--border);
       border-radius: 6px; padding: 4px 8px; font-size: .78rem; }
     .translate-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      white-space: pre-wrap; word-break: break-word; }
     .transcript-wrap { display: none; background: var(--card); border-radius: 12px;
       padding: 12px 14px; margin-bottom: 14px; }
     .transcript-wrap.show { display: block; }
