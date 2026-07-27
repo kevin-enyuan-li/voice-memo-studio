@@ -59,9 +59,15 @@
     .transcript-header { display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 8px; font-size: .82rem; color: var(--muted); font-weight: 600; }
     .transcript-actions { display: flex; gap: 8px; }
-    #transcriptText { width: 100%; min-height: 80px; resize: vertical; background: var(--bg);
-      color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-      font-size: .85rem; font-family: inherit; line-height: 1.5; box-sizing: border-box; }
+    #transcriptText, #translationText { width: 100%; min-height: 80px; resize: vertical;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; font-size: .85rem; font-family: inherit; line-height: 1.5; box-sizing: border-box; }
+    .translate-row { display: none; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .translate-row.show { display: flex; }
+    .translate-row select { background: var(--card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: .8rem; }
+    .translation-wrap { display: none; padding: 0; margin: 10px 0 0; background: transparent; }
+    .translation-wrap.show { display: block; }
     .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
     .rec-panel.paused .rec-timer { opacity: .55; }
     .rec-timer { font-size: 1.3rem; font-weight: 700; color: var(--red);
@@ -306,6 +312,39 @@
       </div>
     </div>
     <textarea id="transcriptText" placeholder="Transcript will appear here…"></textarea>
+
+    <div class="translate-row" id="translateRow">
+      <span class="sl-label" style="width:auto">🌐 Translate to</span>
+      <select id="selTranslateLang">
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="it">Italian</option>
+        <option value="pt">Portuguese</option>
+        <option value="zh">Chinese (Simplified)</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="ru">Russian</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+        <option value="nl">Dutch</option>
+        <option value="pl">Polish</option>
+        <option value="tr">Turkish</option>
+        <option value="vi">Vietnamese</option>
+      </select>
+      <button class="btn-trim-reset" id="btnTranslate">Translate</button>
+    </div>
+
+    <div class="transcript-wrap translation-wrap" id="translationWrap">
+      <div class="transcript-header">
+        <span>🌐 Translation</span>
+        <div class="transcript-actions">
+          <button class="btn-trim-reset" id="btnCopyTranslation">📋 Copy</button>
+          <button class="btn-trim-reset" id="btnExportTranslation">💾 Export .txt</button>
+        </div>
+      </div>
+      <textarea id="translationText" placeholder="Translation will appear here…"></textarea>
+    </div>
   </div>
 
   <!-- Playback -->
@@ -656,6 +695,12 @@ let recTimerRafId = null;
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let transcriptFinal = ''; // accumulated finalized text for the recording in progress
+let transcriptLang = 'en'; // base language subtag the transcript was recognized in
+
+// On-device translation — even newer/more experimental than SpeechRecognition; as of
+// this writing it's Chrome-only, sometimes behind a flag, and may need to download a
+// language-pack model on first use of a given language pair.
+const TranslatorAPI = typeof self !== 'undefined' && 'Translator' in self;
 
 // ── Monitor state ──────────────────────────────────────────────────────────
 let monitorMode   = 'off';  // 'off' | 'direct' | 'effects'
@@ -718,6 +763,13 @@ const transcriptWrap = $('transcriptWrap');
 const transcriptText = $('transcriptText');
 const btnCopyTranscript   = $('btnCopyTranscript');
 const btnExportTranscript = $('btnExportTranscript');
+const translateRow    = $('translateRow');
+const selTranslateLang = $('selTranslateLang');
+const btnTranslate    = $('btnTranslate');
+const translationWrap = $('translationWrap');
+const translationText = $('translationText');
+const btnCopyTranslation   = $('btnCopyTranslation');
+const btnExportTranslation = $('btnExportTranslation');
 const selInputDevice  = $('selInputDevice');
 const selOutputDevice = $('selOutputDevice');
 const outputDeviceRow = $('outputDeviceRow');
@@ -761,6 +813,7 @@ function resetMemo() {
   transcriptText.value = '';
   transcriptWrap.classList.remove('show');
   transcribeLive.textContent = '';
+  hideTranslation();
 
   setStatus('');
 }
@@ -1523,6 +1576,75 @@ btnExportTranscript.addEventListener('click', async () => {
   await shareOrDownload(blob, `${baseName || 'memo'}_transcript.txt`, 'text/plain');
 });
 
+// ── On-device translation ────────────────────────────────────────────────────
+const TRANSLATE_LANG_KEY = 'vms_translate_lang_v1';
+try {
+  const savedLang = localStorage.getItem(TRANSLATE_LANG_KEY);
+  if (savedLang) selTranslateLang.value = savedLang;
+} catch(_) {}
+selTranslateLang.addEventListener('change', () => {
+  try { localStorage.setItem(TRANSLATE_LANG_KEY, selTranslateLang.value); } catch(_) {}
+});
+
+function hideTranslation() {
+  translationText.value = '';
+  translationWrap.classList.remove('show');
+}
+
+btnTranslate.addEventListener('click', async () => {
+  const text = transcriptText.value.trim();
+  if (!text) { setStatus('Nothing to translate yet.', 'err'); setTimeout(() => setStatus(''), 2000); return; }
+  const targetLanguage = selTranslateLang.value;
+  const sourceLanguage = transcriptLang || 'en';
+  if (sourceLanguage === targetLanguage) {
+    setStatus('Transcript is already in that language.', 'err'); setTimeout(() => setStatus(''), 2500);
+    return;
+  }
+  btnTranslate.disabled = true;
+  setStatus('Checking translation model availability…', 'proc');
+  try {
+    const availability = await Translator.availability({ sourceLanguage, targetLanguage });
+    if (availability === 'unavailable') {
+      setStatus(`Translating ${sourceLanguage} → ${targetLanguage} isn't supported on this device.`, 'err');
+      return;
+    }
+    if (availability !== 'available') {
+      setStatus('Downloading language model (first use only)… this can take a while.', 'proc');
+    }
+    const translator = await Translator.create({
+      sourceLanguage, targetLanguage,
+      monitor(m) {
+        m.addEventListener('downloadprogress', e => {
+          setStatus(`Downloading language model… ${Math.round(e.loaded * 100)}%`, 'proc');
+        });
+      },
+    });
+    setStatus('Translating…', 'proc');
+    const result = await translator.translate(text);
+    translationText.value = result;
+    translationWrap.classList.add('show');
+    setStatus('Translated!', 'ok'); setTimeout(() => setStatus(''), 2000);
+  } catch (e) {
+    setStatus('Translation failed: ' + (e && e.message || e), 'err');
+  } finally {
+    btnTranslate.disabled = false;
+  }
+});
+
+btnCopyTranslation.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(translationText.value);
+    setStatus('Translation copied.', 'ok'); setTimeout(() => setStatus(''), 2000);
+  } catch (e) {
+    setStatus('Could not copy — select the text and copy manually.', 'err');
+    setTimeout(() => setStatus(''), 3000);
+  }
+});
+btnExportTranslation.addEventListener('click', async () => {
+  const blob = new Blob([translationText.value], { type: 'text/plain' });
+  await shareOrDownload(blob, `${baseName || 'memo'}_translation_${selTranslateLang.value}.txt`, 'text/plain');
+});
+
 // Forces a signal down to a single real channel via the standard 0.5*(L+R) downmix.
 // Some mics/headsets report 2 input channels to the OS but only actually wire the left
 // one, leaving the right silent (or, once naively duplicated, unbalanced) — this fixes
@@ -1558,6 +1680,7 @@ function createRecognitionInstance() {
   rec.continuous = true;
   rec.interimResults = true;
   rec.lang = navigator.language || 'en-US';
+  transcriptLang = rec.lang.split('-')[0]; // base subtag (e.g. 'en'), what Translator expects
   rec.onresult = e => {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -1599,6 +1722,7 @@ function showTranscriptIfNonEmpty() {
   else { transcriptWrap.classList.remove('show'); transcriptText.value = ''; }
 }
 if (SpeechRec) transcribeRow.classList.add('show');
+if (TranslatorAPI) translateRow.classList.add('show');
 
 async function startRecording() {
   // Must run before the getUserMedia await to stay inside the tap gesture.
@@ -1982,7 +2106,9 @@ async function saveToLibrary() {
   try {
     const blob = new Blob([encodeWAV(audioBuffer)], { type: 'audio/wav' });
     const transcript = transcriptText.value.trim() || null;
-    await libAdd({ name: baseName || 'memo', blob, duration: audioBuffer.duration, createdAt: Date.now(), transcript });
+    const translation = translationText.value.trim() || null;
+    const translationLang = translation ? selTranslateLang.value : null;
+    await libAdd({ name: baseName || 'memo', blob, duration: audioBuffer.duration, createdAt: Date.now(), transcript, translation, translationLang });
     setStatus('Saved to library.', 'ok'); setTimeout(() => setStatus(''), 2500);
     if (libraryPanel.classList.contains('show')) renderLibraryList();
   } catch(e) {
@@ -2026,6 +2152,13 @@ async function loadFromLibrary(id) {
   if (ok) {
     transcriptText.value = rec.transcript || '';
     showTranscriptIfNonEmpty();
+    if (rec.translation) {
+      translationText.value = rec.translation;
+      if (rec.translationLang) selTranslateLang.value = rec.translationLang;
+      translationWrap.classList.add('show');
+    } else {
+      hideTranslation();
+    }
     closeLibrary();
   }
 }
