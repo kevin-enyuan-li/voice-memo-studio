@@ -50,6 +50,8 @@
     .transcribe-row { display: none; }
     .transcribe-row.show { display: flex; }
     .transcribe-row .sl-label { width: auto; }
+    #selSpeechLang { background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 8px; font-size: .78rem; }
     .transcribe-live { font-size: .78rem; color: var(--muted); flex: 1; min-width: 100px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .transcribe-live .interim { opacity: .55; font-style: italic; }
@@ -273,6 +275,30 @@
     <div class="sl-row transcribe-row" id="transcribeRow">
       <span class="sl-label" title="Live speech-to-text while recording (Chrome/Edge only)">📝 Transcribe</span>
       <label class="tog"><input type="checkbox" id="tTranscribe"><span class="tog-sl"></span></label>
+      <select id="selSpeechLang" title="Language you'll be speaking — independent of your browser's language">
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+        <option value="es-ES">Spanish (Spain)</option>
+        <option value="es-MX">Spanish (Mexico)</option>
+        <option value="fr-FR">French</option>
+        <option value="de-DE">German</option>
+        <option value="it-IT">Italian</option>
+        <option value="pt-BR">Portuguese (Brazil)</option>
+        <option value="pt-PT">Portuguese (Portugal)</option>
+        <option value="zh-CN">Chinese (Mandarin, Simplified)</option>
+        <option value="zh-TW">Chinese (Mandarin, Traditional)</option>
+        <option value="zh-HK">Chinese (Cantonese)</option>
+        <option value="ja-JP">Japanese</option>
+        <option value="ko-KR">Korean</option>
+        <option value="ru-RU">Russian</option>
+        <option value="ar-SA">Arabic</option>
+        <option value="hi-IN">Hindi</option>
+        <option value="nl-NL">Dutch</option>
+        <option value="pl-PL">Polish</option>
+        <option value="tr-TR">Turkish</option>
+        <option value="vi-VN">Vietnamese</option>
+        <option value="th-TH">Thai</option>
+      </select>
       <span class="transcribe-live" id="transcribeLive"></span>
     </div>
   </div>
@@ -758,6 +784,7 @@ const sInputGain  = $('sInputGain');
 const vInputGain  = $('vInputGain');
 const transcribeRow  = $('transcribeRow');
 const tTranscribe    = $('tTranscribe');
+const selSpeechLang  = $('selSpeechLang');
 const transcribeLive = $('transcribeLive');
 const transcriptWrap = $('transcriptWrap');
 const transcriptText = $('transcriptText');
@@ -1562,6 +1589,30 @@ tTranscribe.addEventListener('change', () => {
 });
 try { tTranscribe.checked = localStorage.getItem(TRANSCRIBE_KEY) === '1'; } catch(_) {}
 
+// Speech recognition language — what you're SPEAKING, independent of the browser's own
+// UI language. Defaults to a smart guess from navigator.language (exact match, then
+// base-language match against the option list, then plain English) but is always
+// user-overridable, since browser locale often doesn't match what you want to record in.
+const SPEECH_LANG_KEY = 'vms_speech_lang_v1';
+(function initSpeechLangDefault() {
+  try {
+    const saved = localStorage.getItem(SPEECH_LANG_KEY);
+    if (saved && [...selSpeechLang.options].some(o => o.value === saved)) {
+      selSpeechLang.value = saved;
+      return;
+    }
+  } catch(_) {}
+  const nav = navigator.language || 'en-US';
+  const options = [...selSpeechLang.options].map(o => o.value);
+  if (options.includes(nav)) { selSpeechLang.value = nav; return; }
+  const base = nav.split('-')[0];
+  const baseMatch = options.find(o => o.split('-')[0] === base);
+  if (baseMatch) selSpeechLang.value = baseMatch;
+})();
+selSpeechLang.addEventListener('change', () => {
+  try { localStorage.setItem(SPEECH_LANG_KEY, selSpeechLang.value); } catch(_) {}
+});
+
 btnCopyTranscript.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(transcriptText.value);
@@ -1679,7 +1730,7 @@ function createRecognitionInstance() {
   const rec = new SpeechRec();
   rec.continuous = true;
   rec.interimResults = true;
-  rec.lang = navigator.language || 'en-US';
+  rec.lang = selSpeechLang.value || 'en-US'; // what you're SPEAKING — independent of the browser's own language
   transcriptLang = rec.lang.split('-')[0]; // base subtag (e.g. 'en'), what Translator expects
   rec.onresult = e => {
     let interim = '';
