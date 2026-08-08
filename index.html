@@ -75,6 +75,13 @@
     .translate-row.show { display: flex; }
     .translation-wrap { display: none; padding: 0; margin: 10px 0 0; background: transparent; }
     .translation-wrap.show { display: block; }
+    .interleave-list { display: none; flex-direction: column; gap: 10px; }
+    .interleave-list.show { display: flex; }
+    .interleave-pair { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; }
+    .il-source { font-size: .85rem; line-height: 1.5; }
+    .il-target { font-size: .85rem; line-height: 1.5; color: var(--muted); font-style: italic; margin-top: 2px; }
+    .il-unmatched { margin-top: 4px; padding: 8px 10px; border-radius: 8px; background: var(--bg);
+      color: var(--muted); font-size: .78rem; line-height: 1.5; }
     .rec-panel.paused .rec-dot { animation-play-state: paused; opacity: .35; }
     .rec-panel.paused .rec-timer { opacity: .55; }
     .rec-timer { font-size: 1.3rem; font-weight: 700; color: var(--red);
@@ -366,11 +373,13 @@
     <div class="transcript-header">
       <span>📝 Transcript</span>
       <div class="transcript-actions">
+        <button class="btn-trim-reset" id="btnInterleave" title="Show transcript and translation together, sentence by sentence">🔀 Interleave</button>
         <button class="btn-trim-reset" id="btnCopyTranscript">📋 Copy</button>
         <button class="btn-trim-reset" id="btnExportTranscript">💾 Export .txt</button>
       </div>
     </div>
     <textarea id="transcriptText" placeholder="Transcript will appear here…"></textarea>
+    <div class="interleave-list" id="interleaveList"></div>
 
     <div class="translate-row" id="translateRow">
       <button class="btn-trim-reset" id="btnTranslate" title="(Re)translate the whole transcript, using the language picked in Live Translate above">🌐 Translate</button>
@@ -810,6 +819,8 @@ const selSpeechLang  = $('selSpeechLang');
 const transcribeLive = $('transcribeLive');
 const transcriptWrap = $('transcriptWrap');
 const transcriptText = $('transcriptText');
+const btnInterleave  = $('btnInterleave');
+const interleaveList = $('interleaveList');
 const btnCopyTranscript   = $('btnCopyTranscript');
 const btnExportTranscript = $('btnExportTranscript');
 const translateRow    = $('translateRow');
@@ -868,6 +879,7 @@ function resetMemo() {
   transcribeLive.textContent = '';
   translateLive.textContent = '';
   hideTranslation();
+  setInterleaved(false);
 
   setStatus('');
 }
@@ -1731,6 +1743,39 @@ btnExportTranslation.addEventListener('click', async () => {
   await shareOrDownload(blob, `${baseName || 'memo'}_translation_${selTranslateLang.value}.txt`, 'text/plain');
 });
 
+// ── Interleaved transcript/translation view ─────────────────────────────────
+// Transcript and translation are each stored one sentence per line (Live Translate
+// keeps them in step, sentence by sentence), so pairing them up is just a line-by-line
+// zip of the two textareas' current contents — computed fresh each time the view is
+// shown, so hand-edits are reflected. If the line counts don't match (edited by hand,
+// or translated via the one-shot "Translate" button instead of live), pairs up as far
+// as it can and lists the rest below rather than guessing or silently dropping lines.
+let interleaved = false;
+function renderInterleave() {
+  const srcLines = transcriptText.value.split('\n').map(s => s.trim()).filter(Boolean);
+  const tgtLines = translationText.value.split('\n').map(s => s.trim()).filter(Boolean);
+  const paired = Math.min(srcLines.length, tgtLines.length);
+  let html = '';
+  for (let i = 0; i < paired; i++) {
+    html += `<div class="interleave-pair"><div class="il-source">📝 ${escapeHtml(srcLines[i])}</div><div class="il-target">🌐 ${escapeHtml(tgtLines[i])}</div></div>`;
+  }
+  const leftover = srcLines.slice(paired).concat(tgtLines.slice(paired));
+  if (leftover.length) {
+    html += `<div class="il-unmatched">Unpaired line${leftover.length > 1 ? 's' : ''} (transcript/translation line counts don't match):<br>${leftover.map(l => escapeHtml(l)).join('<br>')}</div>`;
+  }
+  interleaveList.innerHTML = html || '<div class="lib-empty">Nothing to interleave yet — record with Live Translate on, or translate the transcript first.</div>';
+}
+function setInterleaved(on) {
+  interleaved = on;
+  transcriptText.style.display = on ? 'none' : '';
+  translationWrap.style.display = on ? 'none' : '';
+  interleaveList.classList.toggle('show', on);
+  btnInterleave.textContent = on ? '✎ Separate' : '🔀 Interleave';
+  if (on) renderInterleave();
+}
+btnInterleave.addEventListener('click', () => setInterleaved(!interleaved));
+if (!TranslatorAPI) btnInterleave.style.display = 'none';
+
 // Forces a signal down to a single real channel via the standard 0.5*(L+R) downmix.
 // Some mics/headsets report 2 input channels to the OS but only actually wire the left
 // one, leaving the right silent (or, once naively duplicated, unbalanced) — this fixes
@@ -1777,7 +1822,7 @@ function queueLiveTranslation(segment, sourceLanguage) {
         liveTranslator = await Translator.create({ sourceLanguage, targetLanguage });
         liveTranslatorPair = pairKey;
       }
-      translationFinal += await liveTranslator.translate(text) + ' ';
+      translationFinal += await liveTranslator.translate(text) + '\n';
       translateLive.textContent = translationFinal;
     } catch (e) {
       console.warn('Live translation error:', e);
@@ -1795,7 +1840,7 @@ function createRecognitionInstance() {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) {
-        transcriptFinal += t + ' ';
+        transcriptFinal += t + '\n';
         if (tLiveTranslate.checked && TranslatorAPI) queueLiveTranslation(t, transcriptLang);
       }
       else interim += t;
