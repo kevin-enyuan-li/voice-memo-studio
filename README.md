@@ -78,6 +78,13 @@ Exported files are named `<original-basename>_studio.<ext>` (or `recording_<time
 - Loading a memo from the library reuses the same decode path as dragging in a file (`decodeAndLoad()`), including the usual "start fresh" reset of the current session first.
 - **🔍 Search** (above the list) filters by name, transcript, or translation as you type, client-side — matching the exact recall use case those fields already made possible ("find that memo where I said..."). Whichever field actually matched gets shown as the preview snippet, re-centered on the match itself (not always the first 80 characters, which would miss anything buried deeper in a longer transcript) with the hit highlighted; the 📝/🌐 icon indicates whether the match landed in the transcript or the translation. Resets whenever the library panel is reopened.
 
+## Installable (PWA)
+
+The [live demo](https://kevin-enyuan-li.github.io/voice-memo-studio/) is installable — "Add to Home Screen" on iOS/Android, or the install icon in Chrome/Edge's address bar on desktop — and then launches full-screen like a native app, no browser chrome. Backed by a `manifest.json` (name, icons, `display: "standalone"`, theme color matching the app's own dark background) and a minimal app-shell service worker (`sw.js`):
+- Same-origin requests (the app itself, its manifest, its icons) go **network-first**, falling back to the cache when offline — so you always get the latest version while online (this project ships updates often), and it still launches and works with no connection once it's been loaded at least once.
+- The one cross-origin request (the [lamejs](https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js) CDN script used for MP3 export) is deliberately left alone — MP3 export already requires network with or without the service worker, so there's nothing to gain caching it, and every other feature (record, trim, effects, WAV/M4A export, the library) works fully offline.
+- Feature-detected the same way as everything else browser-API-dependent in this project — registration is skipped with no error on `file://` (service workers require a secure context) or in any browser without support, so opening `index.html` directly still works exactly as before.
+
 ## Tech stack
 
 - Plain HTML/CSS/JS — no framework, no bundler, no `npm install`.
@@ -92,6 +99,10 @@ Exported files are named `<original-basename>_studio.<ext>` (or `recording_<time
 ```
 voice-memo-studio/
 ├── index.html                       # Entire app: markup, styles, and JS in one file
+├── manifest.json                    # PWA manifest (name, icons, standalone display)
+├── sw.js                            # App-shell service worker for install/offline support
+├── icon.svg                         # Source icon (edit this, then re-render icons/)
+├── icons/                           # Generated PNG icons (192/512/apple-touch/favicon)
 └── voice-memo-studio.code-workspace # VS Code workspace file
 ```
 

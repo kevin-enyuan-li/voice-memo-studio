@@ -4,6 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Memo Studio</title>
+
+  <!-- Installable PWA: manifest + icons + iOS-specific home-screen meta tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f0f1a">
+  <link rel="icon" href="icons/favicon-48.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Voice Memo">
+
   <style>
     :root {
       --bg: #0f0f1a; --card: #16213e; --border: #2d3748;
@@ -2839,6 +2849,16 @@ btnDeletePreset.addEventListener('click', () => {
 loadPrefs();
 refreshSliderLabels();
 refreshPresetSelect('');
+
+// Installable PWA: registers the app-shell service worker so the app can launch from
+// the home screen and keep working offline. No-ops on file:// (service workers need a
+// secure context) or in any browser without support — same feature-detect-and-skip
+// pattern used throughout for other browser APIs.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
