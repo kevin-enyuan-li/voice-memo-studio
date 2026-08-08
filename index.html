@@ -299,6 +299,10 @@
       <input type="range" class="sl" id="sInputGain" min="0" max="300" value="100">
       <span class="sl-val" id="vInputGain">100%</span>
     </div>
+    <div class="sl-row rec-gain-row">
+      <span class="sl-label" title="Reduces steady background hiss/hum in what actually gets recorded, live — not just an after-the-fact effect. Never affects Monitor, so it adds zero latency to what you hear while recording.">🔇 Reduce Background Noise</span>
+      <label class="tog"><input type="checkbox" id="tRecDenoise" checked><span class="tog-sl"></span></label>
+    </div>
     <div class="sl-row transcribe-row" id="transcribeRow">
       <span class="sl-label" title="Live speech-to-text while recording (Chrome/Edge only)">📝 Transcribe</span>
       <label class="tog"><input type="checkbox" id="tTranscribe"><span class="tog-sl"></span></label>
@@ -685,9 +689,19 @@ function refreshPresetSelect(selectName) {
 }
 
 // ── AudioWorklet noise gate ────────────────────────────────────────────────
+// Multiband expander: splits the signal into several parallel bandpass bands and gates
+// each one independently on its own envelope, then sums them back together. A single
+// full-band gate (the original design here) can only act in the gaps between words —
+// once your voice opens the gate, steady hiss/hum sitting *underneath* speech passes
+// through completely untouched. Per-band gating instead attenuates whichever bands are
+// currently noise-dominated while the band(s) actually carrying your voice stay open, so
+// it reduces steady broadband noise during speech too, not just silence. The band split
+// itself does add a little coloration (summing overlapping bandpass filters isn't
+// perfectly flat) — MAKEUP compensates for the biggest part of that, tuned by computing
+// the summed all-bands-open frequency response and picking a gain that centers it close
+// to 0dB across the 100Hz–10kHz range that matters for speech.
 const GATE_SRC = `
 class NoiseGate extends AudioWorkletProcessor {
-  constructor() { super(); this._env = 0; }
   static get parameterDescriptors() {
     return [
       { name: 'threshold', defaultValue: 0.015, minValue: 0, maxValue: 1 },
@@ -695,16 +709,48 @@ class NoiseGate extends AudioWorkletProcessor {
       { name: 'smooth',    defaultValue: 0.997, minValue: 0, maxValue: 1 }
     ];
   }
+  constructor() {
+    super();
+    const FREQS = [150, 350, 800, 1800, 3500, 7000];
+    const Q = 1.0;
+    this._MAKEUP = 0.68;
+    this._coef = FREQS.map(f0 => {
+      const w0 = 2 * Math.PI * f0 / sampleRate;
+      const alpha = Math.sin(w0) / (2 * Q);
+      const a0 = 1 + alpha;
+      return { b0: alpha / a0, b2: -alpha / a0, a1: (-2 * Math.cos(w0)) / a0, a2: (1 - alpha) / a0 };
+    });
+    this._state = null; // per-channel, per-band filter+envelope state — sized on first process()
+  }
+  _ensureState(channels) {
+    if (this._state && this._state.length === channels) return;
+    this._state = Array.from({ length: channels }, () =>
+      this._coef.map(() => ({ x1: 0, x2: 0, y1: 0, y2: 0, env: 0 })));
+  }
   process(inputs, outputs, params) {
     const inp = inputs[0], out = outputs[0];
     if (!inp || !inp.length) return true;
-    const thr = params.threshold[0], red = params.reduction[0], smo = params.smooth[0];
-    for (let i = 0; i < (inp[0]||[]).length; i++) {
-      let peak = 0;
-      for (const ch of inp) peak = Math.max(peak, Math.abs(ch[i]||0));
-      this._env = peak > this._env ? peak : this._env * smo;
-      const g = this._env > thr ? 1.0 : red;
-      for (let c = 0; c < out.length; c++) out[c][i] = (inp[c]?.[i]||0) * g;
+    this._ensureState(inp.length);
+    const thrP = params.threshold, redP = params.reduction, smoP = params.smooth;
+    const n = inp[0].length;
+    for (let c = 0; c < inp.length; c++) {
+      const x = inp[c], y = out[c], bandState = this._state[c];
+      for (let i = 0; i < n; i++) {
+        const xi = x[i] || 0;
+        const thr = thrP.length > 1 ? thrP[i] : thrP[0];
+        const red = redP.length > 1 ? redP[i] : redP[0];
+        const smo = smoP.length > 1 ? smoP[i] : smoP[0];
+        let sum = 0;
+        for (let b = 0; b < this._coef.length; b++) {
+          const co = this._coef[b], st = bandState[b];
+          const bp = co.b0 * xi + co.b2 * st.x2 - co.a1 * st.y1 - co.a2 * st.y2;
+          st.x2 = st.x1; st.x1 = xi; st.y2 = st.y1; st.y1 = bp;
+          const mag = Math.abs(bp);
+          st.env = mag > st.env ? mag : st.env * smo;
+          sum += bp * (st.env > thr ? 1.0 : red);
+        }
+        y[i] = sum * this._MAKEUP;
+      }
     }
     return true;
   }
@@ -723,6 +769,15 @@ async function ensureGate(ctx) {
   _gateLoaded.add(ctx);
 }
 
+// Fixed "medium" strength for the recording-time "Reduce Background Noise" toggle — same
+// math as the effects rack's own Noise Reduce at its default 40%, just applied live during
+// capture instead of requiring a manual toggle after the fact. No slider of its own; the
+// rack's Noise Reduce (with its own Strength control) is still there for further tuning.
+const RECORD_DENOISE_PARAMS = (() => {
+  const s = 0.4;
+  return { threshold: (0.004 + s * 0.056) * 0.4, reduction: 0.5 - s * 0.485, smooth: 0.994 + s * 0.005 };
+})();
+
 // ── Trim state ─────────────────────────────────────────────────────────────
 let trimStart = 0;
 let trimEnd = 0;
@@ -740,6 +795,7 @@ let recordChunks = [];
 let recordStream = null;
 let micSourceNode = null;   // MediaStreamSource inside main audioCtx
 let recGainNode = null;     // adjustable Input Gain, applied before the meter/downmix/recorder
+let recGateNode = null;     // optional live noise reduction on what actually gets captured
 let micMonoNode = null;     // forces the raw mic signal down to a real (non-silent) mono channel
 let micMonoDest = null;     // MediaStreamDestination the MediaRecorder actually captures from
 let recAnalyser = null;
@@ -823,6 +879,7 @@ const recTimerEl  = $('recTimer');
 const recStatusLabel = $('recStatusLabel');
 const sInputGain  = $('sInputGain');
 const vInputGain  = $('vInputGain');
+const tRecDenoise = $('tRecDenoise');
 const transcribeRow  = $('transcribeRow');
 const tTranscribe    = $('tTranscribe');
 const selSpeechLang  = $('selSpeechLang');
@@ -1077,9 +1134,12 @@ function buildChain(ctx, pr) {
   let gateNode = null;
   if (pr.nsOn) {
     try {
-      const thr = 0.004 + pr.nsStr * 0.056; // 0.004..0.06
-      const red = 0.5   - pr.nsStr * 0.485; // 0.5..0.015
-      const smo = 0.994 + pr.nsStr * 0.005; // 0.994..0.999
+      // *0.4: each band's envelope only sees that band's share of a broadband signal's
+      // energy, so it runs naturally lower than the old full-band envelope did — without
+      // this the same Strength value would gate far more aggressively than before.
+      const thr = (0.004 + pr.nsStr * 0.056) * 0.4; // 0.0016..0.024
+      const red = 0.5   - pr.nsStr * 0.485;         // 0.5..0.015
+      const smo = 0.994 + pr.nsStr * 0.005;         // 0.994..0.999
       gateNode = new AudioWorkletNode(ctx, 'noise-gate',
         { parameterData: { threshold: thr, reduction: red, smooth: smo } });
     } catch(_) { /* worklet not ready yet — graceful no-op */ }
@@ -1133,7 +1193,7 @@ function patchNodes(nd, pr) {
   // nrConv.buffer can't change live — size change requires restart (handled below)
   if (nd.gateNode) {
     try {
-      const thr = 0.004 + pr.nsStr * 0.056;
+      const thr = (0.004 + pr.nsStr * 0.056) * 0.4; // see buildChain() for why *0.4
       const red = 0.5   - pr.nsStr * 0.485;
       nd.gateNode.parameters.get('threshold').value = pr.nsOn ? thr : 0;
       nd.gateNode.parameters.get('reduction').value = pr.nsOn ? red : 1;
@@ -1631,6 +1691,19 @@ try {
 } catch(_) {}
 vInputGain.textContent = `${sInputGain.value}%`;
 
+// Live noise reduction on the recording itself (see RECORD_DENOISE_PARAMS / startRecording()).
+// Defaults ON, unlike the other recording toggles — this exists specifically to fix noisy
+// recordings out of the box, without requiring anyone to know the effects rack has a
+// separate Noise Reduce effect they'd need to remember to enable after the fact.
+const RECORD_DENOISE_KEY = 'vms_rec_denoise_v1';
+tRecDenoise.addEventListener('change', () => {
+  try { localStorage.setItem(RECORD_DENOISE_KEY, tRecDenoise.checked ? '1' : '0'); } catch(_) {}
+});
+try {
+  const saved = localStorage.getItem(RECORD_DENOISE_KEY);
+  tRecDenoise.checked = saved === null ? true : saved === '1';
+} catch(_) { tRecDenoise.checked = true; }
+
 // ── Live transcription toggle (recording) ───────────────────────────────────
 const TRANSCRIBE_KEY = 'vms_transcribe_v1';
 tTranscribe.addEventListener('change', () => {
@@ -1951,15 +2024,29 @@ async function startRecording() {
   recGainNode.gain.value = val('sInputGain') / 100;
   micSourceNode.connect(recGainNode);
 
-  // Analyser taps the gain-adjusted mic signal for the level meter (no effects, no output)
+  // Optional live noise reduction on what actually gets captured (see the "Reduce
+  // Background Noise" toggle below Input Gain). Inserted only in THIS capture path —
+  // never in the separate Monitor graph (monitorCtx, built in enableMonitor()) — so it
+  // can't add any latency to what you hear while recording, only to the file itself.
+  recGateNode = null;
+  if (tRecDenoise.checked) {
+    try {
+      await ensureGate(ctx);
+      recGateNode = new AudioWorkletNode(ctx, 'noise-gate', { parameterData: RECORD_DENOISE_PARAMS });
+      recGainNode.connect(recGateNode);
+    } catch(_) { recGateNode = null; }
+  }
+  const recTap = recGateNode || recGainNode;
+
+  // Analyser taps the (possibly denoised) mic signal for the level meter (no effects, no output)
   recAnalyser = ctx.createAnalyser();
   recAnalyser.fftSize = 256;
-  recGainNode.connect(recAnalyser);
+  recTap.connect(recAnalyser);
 
   // The MediaRecorder captures THIS mono-forced stream, not the raw mic stream —
   // see makeMonoDownmixNode() for why.
   micMonoNode = makeMonoDownmixNode(ctx);
-  recGainNode.connect(micMonoNode);
+  recTap.connect(micMonoNode);
   micMonoDest = ctx.createMediaStreamDestination();
   micMonoNode.connect(micMonoDest);
 
@@ -2056,6 +2143,7 @@ function stopRecording() {
   if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
   if (micSourceNode) { try { micSourceNode.disconnect(); } catch(_) {} micSourceNode = null; }
   if (recGainNode) { try { recGainNode.disconnect(); } catch(_) {} recGainNode = null; }
+  if (recGateNode) { try { recGateNode.disconnect(); } catch(_) {} recGateNode = null; }
   if (micMonoNode) { try { micMonoNode.disconnect(); } catch(_) {} micMonoNode = null; }
   if (micMonoDest) { try { micMonoDest.stream.getTracks().forEach(t => t.stop()); } catch(_) {} micMonoDest = null; }
   recAnalyser = null;
