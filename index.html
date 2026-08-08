@@ -218,6 +218,9 @@
     .library-header { display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 12px; }
     .library-header h2 { font-size: .95rem; font-weight: 700; }
+    #libSearch { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 10px; font-size: .82rem; font-family: inherit;
+      box-sizing: border-box; margin-bottom: 10px; }
     .library-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px;
       overflow-y: auto; }
     .lib-empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 12px 0; }
@@ -229,6 +232,7 @@
     .lib-meta { color: var(--muted); font-size: .76rem; margin-top: 2px; }
     .lib-transcript { color: var(--muted); font-size: .74rem; margin-top: 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-transcript mark { background: var(--accent); color: var(--bg); border-radius: 2px; }
     @media (max-width: 500px) { .fx-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -257,6 +261,7 @@
       <h2>📚 Saved Memos</h2>
       <button class="btn-trim-reset" id="btnCloseLibrary">✕ Close</button>
     </div>
+    <input type="text" id="libSearch" placeholder="🔍 Search by name or transcript…">
     <div class="library-list" id="libraryList"></div>
   </div>
 
@@ -822,6 +827,7 @@ const selOutputDevice = $('selOutputDevice');
 const outputDeviceRow = $('outputDeviceRow');
 const btnLibrary      = $('btnLibrary');
 const libraryPanel    = $('libraryPanel');
+const libSearch       = $('libSearch');
 const libraryList     = $('libraryList');
 const btnCloseLibrary = $('btnCloseLibrary');
 const btnSaveLibrary  = $('btnSaveLibrary');
@@ -2232,24 +2238,52 @@ async function saveToLibrary() {
   }
 }
 
-async function renderLibraryList() {
-  libraryList.innerHTML = '<div class="lib-empty">Loading…</div>';
-  let memos;
-  try { memos = await libGetAll(); } catch(e) { memos = []; }
-  if (!memos.length) {
+let libraryMemos = []; // cached full list for the currently-open panel, filtered client-side as you type
+
+// Builds the transcript/translation preview for one row. With no active search it's just
+// the first 80 chars; with a search query, it re-centers on the match (wherever it falls
+// in a possibly-long transcript) and wraps it in <mark>, so the reason a memo matched is
+// actually visible instead of always showing the same fixed opening snippet.
+function libSnippet(text, query) {
+  if (!text) return '';
+  if (!query) return escapeHtml(text.slice(0, 80)) + (text.length > 80 ? '…' : '');
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return escapeHtml(text.slice(0, 80)) + (text.length > 80 ? '…' : '');
+  const start = Math.max(0, idx - 30);
+  const end = Math.min(text.length, idx + query.length + 30);
+  return (start > 0 ? '…' : '') +
+    escapeHtml(text.slice(start, idx)) +
+    `<mark>${escapeHtml(text.slice(idx, idx + query.length))}</mark>` +
+    escapeHtml(text.slice(idx + query.length, end)) +
+    (end < text.length ? '…' : '');
+}
+
+function renderLibraryRows() {
+  const query = libSearch.value.trim().toLowerCase();
+  const memos = !query ? libraryMemos : libraryMemos.filter(m =>
+    m.name.toLowerCase().includes(query) ||
+    (m.transcript && m.transcript.toLowerCase().includes(query)) ||
+    (m.translation && m.translation.toLowerCase().includes(query)));
+
+  if (!libraryMemos.length) {
     libraryList.innerHTML = '<div class="lib-empty">No saved memos yet — load or record one, then "Save to Library".</div>';
     return;
   }
-  memos.sort((a, b) => b.createdAt - a.createdAt);
+  if (!memos.length) {
+    libraryList.innerHTML = '<div class="lib-empty">No memos match your search.</div>';
+    return;
+  }
   libraryList.innerHTML = memos.map(m => {
     const date = new Date(m.createdAt).toLocaleString();
-    const snippet = m.transcript
-      ? `<div class="lib-transcript">📝 ${escapeHtml(m.transcript.slice(0, 80))}${m.transcript.length > 80 ? '…' : ''}</div>`
-      : '';
+    // Prefer whichever field the search actually matched; with no search, transcript wins.
+    const transcriptHit = m.transcript && (!query || m.transcript.toLowerCase().includes(query));
+    const source = transcriptHit ? m.transcript : m.translation;
+    const icon = transcriptHit ? '📝' : '🌐';
+    const snippet = source ? `<div class="lib-transcript">${icon} ${libSnippet(source, query)}</div>` : '';
     return `
       <div class="lib-row" data-id="${m.id}">
         <div class="lib-info">
-          <div class="lib-name">${m.name}</div>
+          <div class="lib-name">${escapeHtml(m.name)}</div>
           <div class="lib-meta">${fmt(m.duration)} &nbsp;·&nbsp; ${date}</div>
           ${snippet}
         </div>
@@ -2258,6 +2292,14 @@ async function renderLibraryList() {
       </div>`;
   }).join('');
 }
+
+async function renderLibraryList() {
+  libraryList.innerHTML = '<div class="lib-empty">Loading…</div>';
+  try { libraryMemos = await libGetAll(); } catch(e) { libraryMemos = []; }
+  libraryMemos.sort((a, b) => b.createdAt - a.createdAt);
+  renderLibraryRows();
+}
+libSearch.addEventListener('input', renderLibraryRows);
 
 async function loadFromLibrary(id) {
   const rec = await libGet(id);
@@ -2287,6 +2329,7 @@ async function deleteFromLibrary(id, name) {
 
 function openLibrary() {
   libraryPanel.classList.add('show');
+  libSearch.value = '';
   renderLibraryList();
 }
 function closeLibrary() {

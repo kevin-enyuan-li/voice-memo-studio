@@ -76,6 +76,7 @@ Exported files are named `<original-basename>_studio.<ext>` (or `recording_<time
 - **📚 Library** (next to Record New Memo) opens a panel listing memos saved locally in **IndexedDB** (`vms_library_v1`), persisting across page reloads — name, duration, and saved date, with **▶ Load** and **🗑 Delete** (confirms before deleting) per row.
 - **📚 Save to Library** (in the export row) WAV-encodes the *current* `audioBuffer` — so any trim you've applied is reflected — and stores it as a new library entry. It does not include the live effects rack (that's what the format exports are for); think of the library as source-material checkpoints, not final renders.
 - Loading a memo from the library reuses the same decode path as dragging in a file (`decodeAndLoad()`), including the usual "start fresh" reset of the current session first.
+- **🔍 Search** (above the list) filters by name, transcript, or translation as you type, client-side — matching the exact recall use case those fields already made possible ("find that memo where I said..."). Whichever field actually matched gets shown as the preview snippet, re-centered on the match itself (not always the first 80 characters, which would miss anything buried deeper in a longer transcript) with the hit highlighted; the 📝/🌐 icon indicates whether the match landed in the transcript or the translation. Resets whenever the library panel is reopened.
 
 ## Tech stack
 
