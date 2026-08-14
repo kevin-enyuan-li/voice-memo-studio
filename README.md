@@ -103,8 +103,7 @@ voice-memo-studio/
 ├── manifest.json                    # PWA manifest (name, icons, standalone display)
 ├── sw.js                            # App-shell service worker for install/offline support
 ├── icon.svg                         # Source icon (edit this, then re-render icons/)
-├── icons/                           # Generated PNG icons (192/512/apple-touch/favicon)
-└── voice-memo-studio.code-workspace # VS Code workspace file
+└── icons/                           # Generated PNG icons (192/512/apple-touch/favicon)
 ```
 
 ## Running it
