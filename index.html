@@ -252,6 +252,13 @@
     .lib-transcript { color: var(--muted); font-size: .74rem; margin-top: 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lib-transcript mark { background: var(--accent); color: var(--bg); border-radius: 2px; }
+    .tracks-panel { display: none; background: var(--card); border-radius: 12px;
+      border: 1px solid var(--border); padding: 14px 16px; margin-bottom: 16px; }
+    .tracks-panel.show { display: block; }
+    .tracks-panel .library-header { margin-bottom: 10px; }
+    .tracks-panel .library-header p { color: var(--muted); font-size: .78rem; margin-top: 2px; }
+    .tracks-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .track-gain { flex: 0 0 80px !important; }
     @media (max-width: 500px) { .fx-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -367,6 +374,21 @@
       <div class="drop-icon">🎤</div>
       <div class="drop-hint">Drop your voice memo here or <strong>click to browse</strong></div>
       <div style="color:var(--muted);font-size:.78rem;margin-top:6px">M4A · MP3 · WAV · AAC · OGG and more</div>
+    </div>
+  </div>
+
+  <!-- Multi-track mixdown -->
+  <div class="tracks-panel" id="tracksPanel">
+    <div class="library-header">
+      <h2>🎚️ Tracks</h2>
+      <p style="margin:0">Record or import more clips, then merge them into the one memo above</p>
+    </div>
+    <div class="library-list" id="trackList"></div>
+    <div class="tracks-actions">
+      <button class="btn-trim-reset" id="btnAddTrackRecord">🎙 Record Another Track</button>
+      <button class="btn-trim-reset" id="btnAddTrackFile">📁 Import Track</button>
+      <input type="file" id="trackFileInput" accept="audio/*" multiple style="display:none">
+      <button class="btn-trim" id="btnMergeTracks" disabled title="Combine all tracks above into one merged memo">🔀 Merge Tracks</button>
     </div>
   </div>
 
@@ -641,6 +663,13 @@ let rafId = null;
 let baseName = 'output';
 let seekDragging = false;
 let bypassOn = false; // ephemeral A/B compare toggle — not persisted, doesn't affect export
+
+// ── Multi-track mixdown ─────────────────────────────────────────────────────
+// The currently loaded/recorded audioBuffer is always the implicit first track;
+// pendingTracks holds additional clips queued to be merged into it.
+let pendingTracks = []; // { id, name, buffer, gain, muted }
+let trackIdCounter = 0;
+let addingTrack = false; // true while startRecording() is capturing an additional track, not the primary memo
 
 // ── Preferences (localStorage) ─────────────────────────────────────────────
 const PREF_KEY   = 'vms_prefs_v1';
@@ -917,6 +946,12 @@ const libSearch       = $('libSearch');
 const libraryList     = $('libraryList');
 const btnCloseLibrary = $('btnCloseLibrary');
 const btnSaveLibrary  = $('btnSaveLibrary');
+const tracksPanel     = $('tracksPanel');
+const trackList       = $('trackList');
+const btnAddTrackRecord = $('btnAddTrackRecord');
+const btnAddTrackFile = $('btnAddTrackFile');
+const trackFileInput  = $('trackFileInput');
+const btnMergeTracks  = $('btnMergeTracks');
 const dropContentDefault = dropContent.innerHTML;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -938,6 +973,9 @@ function resetMemo() {
   seekBar.value = 0;
   curTimeEl.textContent = '0:00';
   totTimeEl.textContent = '0:00';
+
+  pendingTracks = [];
+  tracksPanel.classList.remove('show');
 
   waveWrap.classList.remove('show');
   playback.classList.remove('show');
@@ -1679,6 +1717,18 @@ btnRecord.addEventListener('click', () => {
   startRecording();
 });
 
+btnAddTrackRecord.addEventListener('click', () => {
+  if (isRecording) return;
+  startRecording(true);
+});
+btnAddTrackFile.addEventListener('click', () => trackFileInput.click());
+trackFileInput.addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []);
+  trackFileInput.value = ''; // allow re-selecting the same file later
+  for (const f of files) await addTrackFromFile(f);
+});
+btnMergeTracks.addEventListener('click', mergeTracks);
+
 btnStopRec.addEventListener('click', stopRecording);
 btnPauseRec.addEventListener('click', () => { isPaused ? resumeRecording() : pauseRecording(); });
 btnResetRec.addEventListener('click', resetRecording);
@@ -1977,7 +2027,7 @@ if (SpeechRec) transcribeRow.classList.add('show');
 if (TranslatorAPI) translateRow.classList.add('show');
 if (SpeechRec && TranslatorAPI) translateLiveRow.classList.add('show');
 
-async function startRecording() {
+async function startRecording(asTrack = false) {
   // Must run before the getUserMedia await to stay inside the tap gesture.
   await withTimeout(unlockAudioSession(), 1000);
 
@@ -2020,7 +2070,12 @@ async function startRecording() {
 
   refreshDeviceLists(); // now that permission is granted, real device labels are available
 
-  resetMemo();
+  // Only commit to "adding a track" once mic access has actually succeeded — every
+  // earlier return above leaves addingTrack untouched, so a failed attempt can't
+  // wrongly put a later, unrelated recording into track-adding mode.
+  addingTrack = asTrack;
+  if (addingTrack) stop(); // halt playback only; keep the current memo, tracks, and UI intact
+  else resetMemo();
 
   // Use main audioCtx so we can route into the effects chain for monitoring
   const ctx = getCtx();
@@ -2280,6 +2335,9 @@ function normalizeBuffer(buf, targetPeak = 0.9) {
 }
 
 async function finishRecording() {
+  const wasAddingTrack = addingTrack;
+  addingTrack = false; // consume the flag now so a later failure can't leak into the next recording
+
   if (recordChunks.length === 0) { setStatus('Recording was empty.', 'err'); return; }
   setStatus('Processing recording…', 'proc');
 
@@ -2289,8 +2347,17 @@ async function finishRecording() {
   try {
     const ctx = getCtx();
     const ab  = await blob.arrayBuffer();
-    audioBuffer = await ctx.decodeAudioData(ab);
-    normalizeBuffer(audioBuffer);
+    const buf = await ctx.decodeAudioData(ab);
+    normalizeBuffer(buf);
+
+    if (wasAddingTrack) {
+      addPendingTrack(`Track ${pendingTracks.length + 2}`, buf);
+      setStatus(`Track added: ${fmt(buf.duration)}`, 'ok');
+      setTimeout(() => setStatus(''), 3000);
+      return;
+    }
+
+    audioBuffer = buf;
     baseName = 'recording_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
     loadedUI(`Recorded: ${fmt(audioBuffer.duration)}`);
     transcriptText.value = transcriptFinal.trim();
@@ -2535,6 +2602,9 @@ function loadedUI(statusMsg) {
   trimStart = 0; trimEnd = audioBuffer.duration;
   playOffset = 0; stop();
 
+  tracksPanel.classList.add('show');
+  renderTrackList();
+
   waveWrap.classList.add('show');
   playback.classList.add('show');
   fxSection.classList.add('show');
@@ -2549,6 +2619,127 @@ function loadedUI(statusMsg) {
 
   setStatus(statusMsg || 'Ready.', 'ok');
   setTimeout(() => setStatus(''), 3000);
+}
+
+// ── Multi-track mixdown ─────────────────────────────────────────────────────
+// audioBuffer itself is always the implicit, non-removable "track 1"; pendingTracks
+// holds additional clips queued up to be merged into it via mergeTracks().
+function addPendingTrack(name, buffer) {
+  pendingTracks.push({ id: ++trackIdCounter, name, buffer, gain: 1, muted: false });
+  renderTrackList();
+}
+
+function removePendingTrack(id) {
+  pendingTracks = pendingTracks.filter(t => t.id !== id);
+  renderTrackList();
+}
+
+function renderTrackList() {
+  trackList.innerHTML = '';
+
+  if (audioBuffer) {
+    const row = document.createElement('div');
+    row.className = 'lib-row';
+    row.innerHTML = `
+      <div class="lib-info">
+        <div class="lib-name">${escapeHtml(baseName || 'Current memo')}</div>
+        <div class="lib-meta">${fmt(audioBuffer.duration)} · primary track</div>
+      </div>`;
+    trackList.appendChild(row);
+  }
+
+  pendingTracks.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'lib-row';
+    row.innerHTML = `
+      <div class="lib-info">
+        <div class="lib-name">${escapeHtml(t.name)}</div>
+        <div class="lib-meta">${fmt(t.buffer.duration)}</div>
+      </div>
+      <input type="range" class="sl track-gain" min="0" max="200" value="${Math.round(t.gain * 100)}" title="Track gain">
+      <label class="tog" title="Mute this track"><input type="checkbox" class="track-mute" ${t.muted ? 'checked' : ''}><span class="tog-sl"></span></label>
+      <button class="btn-trim-reset" title="Remove track">✕</button>`;
+    row.querySelector('.track-gain').addEventListener('input', e => { t.gain = e.target.value / 100; });
+    row.querySelector('.track-mute').addEventListener('change', e => { t.muted = e.target.checked; });
+    row.querySelector('button').addEventListener('click', () => removePendingTrack(t.id));
+    trackList.appendChild(row);
+  });
+
+  btnMergeTracks.disabled = pendingTracks.length === 0;
+}
+
+async function addTrackFromFile(file) {
+  setStatus('Decoding track…', 'proc');
+  try {
+    const ctx = getCtx();
+    const ab  = await file.arrayBuffer();
+    const buf = await ctx.decodeAudioData(ab);
+    addPendingTrack(file.name.replace(/\.[^.]+$/, ''), buf);
+    setStatus(`Track added: ${file.name}`, 'ok');
+    setTimeout(() => setStatus(''), 3000);
+  } catch(e) {
+    setStatus('Could not decode track: ' + e.message, 'err');
+  }
+}
+
+// Scales a buffer down (never up) so its peak sits at `target`, protecting against
+// clipping from summed tracks — unlike normalizeBuffer(), which only ever boosts.
+function headroomLimit(buf, target = 0.98) {
+  let peak = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  }
+  if (peak <= target) return;
+  const gain = target / peak;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < data.length; i++) data[i] *= gain;
+  }
+}
+
+// Sums a list of { buffer, gain, muted } tracks into one buffer via OfflineAudioContext,
+// all starting at offset 0 (a pure overlay merge, not a timeline with per-track placement).
+// Differing sample rates/channel counts are resampled/up-mixed automatically per the Web
+// Audio spec, so no manual conversion is needed here.
+async function mixdownTracks(tracks) {
+  const active = tracks.filter(t => !t.muted);
+  const sr  = Math.max(...active.map(t => t.buffer.sampleRate));
+  const nCh = Math.max(...active.map(t => t.buffer.numberOfChannels), 1);
+  const len = Math.max(...active.map(t => Math.ceil(t.buffer.duration * sr)));
+  const octx = new OfflineAudioContext(nCh, len, sr);
+
+  active.forEach(t => {
+    const src = octx.createBufferSource();
+    src.buffer = t.buffer;
+    const g = octx.createGain();
+    g.gain.value = t.gain;
+    src.connect(g).connect(octx.destination);
+    src.start(0);
+  });
+
+  const mixed = await octx.startRendering();
+  headroomLimit(mixed);
+  return mixed;
+}
+
+async function mergeTracks() {
+  if (pendingTracks.length === 0 || !audioBuffer) return;
+  const all = [{ buffer: audioBuffer, gain: 1, muted: false }, ...pendingTracks];
+  if (all.every(t => t.muted)) {
+    setStatus('All tracks are muted — nothing to merge.', 'err');
+    setTimeout(() => setStatus(''), 2500);
+    return;
+  }
+  setStatus('Merging tracks…', 'proc');
+  try {
+    audioBuffer = await mixdownTracks(all);
+    pendingTracks = [];
+    baseName = 'mixdown_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
+    loadedUI(`Merged ${all.length} tracks into one (${fmt(audioBuffer.duration)}).`);
+  } catch(e) {
+    setStatus('Could not merge tracks: ' + e.message, 'err');
+  }
 }
 
 // ── Export options ─────────────────────────────────────────────────────────
